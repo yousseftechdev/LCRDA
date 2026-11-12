@@ -1,4 +1,4 @@
-# MCDM Crop Rotation Decision-Aid Hub
+# LCRDA: Live Crop Rotation Decision Aid
 
 A **decision-support hub for smallholder farmers** (NASA Space Apps Challenge
 2026 — crop rotation challenge). Runs on a **Raspberry Pi 4**, serves a web
