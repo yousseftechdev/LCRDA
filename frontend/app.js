@@ -180,6 +180,41 @@ $("water").addEventListener("input", (e) => {
   }
 });
 
+/* ---------- map picker & GPS ---------- */
+$("btnMap").addEventListener("click", () => {
+  const p = $("mapPanel");
+  const opening = p.classList.contains("hidden");
+  p.classList.toggle("hidden", !opening);
+  if (opening) { mapOpen(); p.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+});
+$("btnUseSpot").addEventListener("click", () => {
+  if (!MAP.pin) { $("mapCoord").textContent = "Tap the map first to drop the pin."; return; }
+  $("lat").value = MAP.pin.lat.toFixed(4);
+  $("lon").value = MAP.pin.lon.toFixed(4);
+  $("mapPanel").classList.add("hidden");
+  $("mapCoord").textContent = "No spot chosen yet";
+});
+$("btnGPS").addEventListener("click", () => {
+  if (!navigator.geolocation) {
+    $("dataStatus").textContent = "This phone cannot share its location — type the numbers or pick on the map instead.";
+    return;
+  }
+  $("dataStatus").className = "statusline";
+  $("dataStatus").textContent = "Asking the phone for your location…";
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      $("lat").value = pos.coords.latitude.toFixed(4);
+      $("lon").value = pos.coords.longitude.toFixed(4);
+      $("dataStatus").className = "statusline ok";
+      $("dataStatus").textContent = "Field location set from your phone's GPS.";
+    },
+    () => {
+      $("dataStatus").className = "statusline warn";
+      $("dataStatus").textContent = "Could not get your location — pick it on the map instead.";
+    },
+    { enableHighAccuracy: true, timeout: 10000 });
+});
+
 /* ---------- satellite data status ---------- */
 $("btnFetch").addEventListener("click", async () => {
   const lat = $("lat").value, lon = $("lon").value;
@@ -398,4 +433,5 @@ function render(res) {
 
 /* ---------- boot ---------- */
 initSliders();
+mapInit();
 

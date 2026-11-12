@@ -64,7 +64,9 @@ backend/
   app.py                recommendation pipeline orchestrator
   server.py             stdlib HTTP server + JSON API + 24 h refresher thread
 frontend/               farmer-friendly web UI (plain language, no math,
-                        no emojis, SVG favicon, NASA/FAO/ISRIC attribution)
+                        no emojis, SVG favicon, offline map picker, NASA/FAO/
+                        ISRIC attribution; world.json = Natural Earth 110m
+                        land, public domain)
 tests/test_mcdm.py      35 tests; reproduces the paper's numerical example
 docs/                   technical report (PDF) + generator
 scripts/                install.sh (venv + systemd), run.sh

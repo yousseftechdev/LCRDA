@@ -28,6 +28,25 @@
       <label>Longitude <input id="lon" type="number" step="0.0001" inputmode="decimal" value="31.2357" autocomplete="off"></label>
     </div>
     <div class="datarow">
+      <button id="btnMap" class="ghost" type="button">Pick on a map</button>
+      <button id="btnGPS" class="ghost" type="button">Use my location</button>
+    </div>
+    <div id="mapPanel" class="mappanel hidden">
+      <div class="mapbar">
+        <span class="hint">Tap the map to drop the pin, drag to move,
+        pinch or use + to zoom.</span>
+        <span class="mapzoom">
+          <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
+          <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+        </span>
+      </div>
+      <canvas id="mapCanvas" aria-label="World map for picking your field location"></canvas>
+      <div class="mapfoot">
+        <span id="mapCoord" class="statusline">No spot chosen yet</span>
+        <button id="btnUseSpot" class="use-spot" type="button">Use this spot</button>
+      </div>
+    </div>
+    <div class="datarow">
       <button id="btnFetch" class="ghost" type="button">Check the satellite data</button>
       <span id="dataStatus" class="statusline" role="status"></span>
     </div>
@@ -96,6 +115,8 @@
         <li><b>Weather:</b> daily satellite records for your exact spot from
         NASA POWER (temperature, rain, sun, wind, humidity), updated every day
         and stored on this device — the advice works with no internet.</li>
+        <li><b>Map:</b> world map outlines from Natural Earth (public domain),
+        stored on this device so the location picker works offline.</li>
         <li><b>Soil:</b> the SoilGrids world soil map (acidity, sand, clay)
         for your spot.</li>
         <li><b>Crop science:</b> what each crop needs to grow, from the FAO
@@ -121,6 +142,7 @@
   Method: multi-criteria decision making (Gunawan et al. 2024)
 </footer>
 
+<script src="map.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
