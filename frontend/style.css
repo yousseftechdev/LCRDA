@@ -205,9 +205,26 @@ button:active { transform: translateY(1px); }
 .mapbar .hint { margin: 0; }
 .mapzoom { display: flex; gap: 4px; }
 .mapzoom button { width: 34px; height: 34px; padding: 0; font-weight: 800; font-size: 1.1rem; border-radius: 8px; }
-.mapcanvaswrap { width: 100%; }
-#mapCanvas { display: block; border-radius: 8px; border: 1px solid var(--line);
-  touch-action: none; cursor: crosshair; }
+.mapcanvaswrap { width: 100%; overflow: hidden; border-radius: 9px; }
+#mapCanvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 2 / 1;
+  border: 1px solid #C7D2C1;
+  border-radius: 9px;
+  background: #E3EDF2;
+  box-shadow: 0 2px 8px rgba(34, 48, 31, 0.12);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+}
+#mapCanvas:focus-visible {
+  outline: 3px solid var(--sun);
+  outline-offset: 2px;
+}
+.mapfoot { min-height: 38px; }
+#mapCoord { font-variant-numeric: tabular-nums; }
 .mapfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }
 .use-spot { background: var(--leaf); color: #fff; border: none; font-weight: 800; }
 .use-spot:hover { background: var(--leaf-dark); }
