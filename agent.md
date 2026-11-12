@@ -280,6 +280,25 @@ SoilGrids (ISRIC) data public — cite in PDF. AquaCrop math: FAO. AHP/TOPSIS: S
   - /health 404 FIXED: root cause = the route was only /api/health and
     the user's manual `python run.py` instance answered /health 404;
     added /health alias; both return 200 through the service now.
+- [2026-11-12] SESSION 4 STARTED -- 3D GLOBE + DARK MODE + UI POLISH
+  (user request: 1. map as a SPHERE not flat map -- flat projection makes
+  imagery look like wobbles with holes; 2. show city names; 3. more
+  modern/sleek UI per ios-design craft; 4. dark mode; 5. more 3D
+  objects for impressiveness; 6. suggest more additions; 7. update
+  agent.md + commit MORE FREQUENTLY -- tokens running out, handoff to
+  next agent needed. THIS SESSION COMMITS SMALL + OFTEN.)
+  * PLAN: custom zero-dependency WebGL globe (no libs) replacing the
+    flat map as primary picker: unit sphere with equirectangular
+    texture built client-side by reprojecting Web-Mercator GIBS tiles
+    (z3 mosaic 8x8=64 tiles/layer, per-row drawImage); model matrix
+    Rx(pitch)Ry(yaw); tap-pick via ray-sphere intersection; city labels
+    + pin on a 2D overlay canvas (same perspective math); dark-mode
+    star field. Flat map.js kept as automatic fallback when WebGL
+    unavailable.
+  * City data: GeoNames cities5000 (CC-BY) downloaded to
+    /tmp/opencode/cities5000.txt (70,029 rows) -> filtered pop>=150k ->
+    frontend/cities.json (4100 cities, name/lat/lon/pop, 218 KB,
+    sorted by population desc). COMMITTED FIRST so nothing is lost.
 - [2026-11-12] CODEX MERGE RECONCILED + MAP ACCURACY ROOT-CAUSE FIX
   (user report: "you didn't fix the map", codex committed/pushed/merged PR #1
   fix/map-picker-precision-and-rendering which broke more stuff):
