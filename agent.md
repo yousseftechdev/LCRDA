@@ -280,6 +280,40 @@ SoilGrids (ISRIC) data public — cite in PDF. AquaCrop math: FAO. AHP/TOPSIS: S
   - /health 404 FIXED: root cause = the route was only /api/health and
     the user's manual `python run.py` instance answered /health 404;
     added /health alias; both return 200 through the service now.
+- [2026-11-12] COMMIT 2 -- 3D GLOBE IMPLEMENTED (frontend/globe.js, ~450
+  lines, zero deps, raw WebGL):
+  * Unit sphere (48x72 grid), shaders: equirect imagery sample + sun
+    lighting (day/night terminator, never fully black) + fresnel
+    atmosphere rim.
+  * TEXTURE: z3 GIBS mosaic (8x8 tiles per layer, all 5 layers) loaded
+    through /api/maptile and reprojected client-side to a 2048x1024
+    equirectangular canvas (per-row drawImage; each output row is one
+    latitude). Progressive: texture re-uploaded (throttled 700 ms) as
+    tiles stream in; final at 25 s timeout or all-64-loaded.
+  * Offline fallback: failed tiles -> Natural Earth outlines drawn into
+    the mercator mosaic for that tile rect (uses world.json).
+  * CONTROLS: drag = spin (yaw/pitch, clamped +/-85), inertia decay,
+    pinch/wheel/+/- zoom (camera distance 1.55..5.5), slow auto-rotate
+    after 4 s idle (respects prefers-reduced-motion).
+  * TAP-PICK: exact ray-sphere intersection then inverse model matrix
+    (Ry(-yaw)Rx(-pitch)); verified numerically in node: center tap ->
+    (0,0) exact; setting view to Cairo (yaw=-lon, pitch=+lat derivation
+    verified analytically) projects Cairo to exact canvas center.
+  * OVERLAY (2D canvas above WebGL): GeoNames city labels (pop-scaled
+    font, front-facing only, greedy collision filter, cap 42, min-pop
+    threshold eases with zoom), teardrop pin (tip at the coordinate),
+    and a small orbiting satellite dot (occlusion-tested against the
+    sphere). Star field + atmosphere halo on a space canvas BEHIND the
+    transparent WebGL canvas (stars in dark mode only).
+  * WIRING: app.js now has initPicker(): tries GLOBE.init() (WebGL);
+    fallback = flat map adapter {pin/open/stop/setLayer}. Layer chips
+    moved to app.js buildChips() so clicks route to the active renderer;
+    map.js setLayer slimmed to renderer-only. btnUseSpot/btnMap/stop
+    use PICKER. index.html has 4 stacked canvases in .mapcanvaswrap
+    (spaceCanvas behind, globeCanvas, globeOverlay, mapCanvas fallback
+    hidden when globe active). style.css stacking + grab cursor.
+  * KNOWN: headless Chromium cannot show WebGL -- visual verification of
+    the sphere pending a real browser; math + syntax verified in node.
 - [2026-11-12] SESSION 4 STARTED -- 3D GLOBE + DARK MODE + UI POLISH
   (user request: 1. map as a SPHERE not flat map -- flat projection makes
   imagery look like wobbles with holes; 2. show city names; 3. more

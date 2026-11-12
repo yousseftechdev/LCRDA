@@ -205,7 +205,20 @@ button:active { transform: translateY(1px); }
 .mapbar .hint { margin: 0; }
 .mapzoom { display: flex; gap: 4px; }
 .mapzoom button { width: 34px; height: 34px; padding: 0; font-weight: 800; font-size: 1.1rem; border-radius: 8px; }
-.mapcanvaswrap { width: 100%; overflow: hidden; border-radius: 9px; }
+.mapcanvaswrap { position: relative; width: 100%; overflow: hidden; border-radius: 9px; }
+#spaceCanvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#globeCanvas {
+  position: relative;
+  display: block;
+  width: 100%;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+#globeCanvas:active { cursor: grabbing; }
+#globeOverlay { position: absolute; inset: 0; pointer-events: none; }
 #mapCanvas {
   display: block;
   width: 100%;

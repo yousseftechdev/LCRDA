@@ -35,7 +35,7 @@
       <div id="layerChips" class="chips" role="group" aria-label="Map layer"></div>
       <p id="layerNote" class="hint"></p>
       <div class="mapbar">
-        <span class="hint">Tap the map to drop the pin, drag to move,
+        <span class="hint">Tap the globe to drop the pin, drag to spin it,
         pinch or use + to zoom.</span>
         <span class="mapzoom">
           <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
@@ -43,6 +43,9 @@
         </span>
       </div>
       <div class="mapcanvaswrap">
+        <canvas id="spaceCanvas" aria-hidden="true"></canvas>
+        <canvas id="globeCanvas" aria-label="3D globe for picking your field location"></canvas>
+        <canvas id="globeOverlay" aria-hidden="true"></canvas>
         <canvas id="mapCanvas" aria-label="Satellite map for picking your field location"></canvas>
       </div>
       <div class="mapfoot">
@@ -151,6 +154,7 @@
 </footer>
 
 <script src="map.js"></script>
+<script src="globe.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

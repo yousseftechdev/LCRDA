@@ -68,31 +68,13 @@ function mapOpen(onPick) {
     MAP.pin = null; MAP.cx = 20; MAP.cy = 20; MAP.zoom = 2;
   }
   mapSize(); mapDraw();        // size FIRST: setLayer() draws immediately
-  renderLayerChips();
 }
 
-function renderLayerChips() {
-  const box = document.getElementById("layerChips");
-  if (!box || box.dataset.built) return;
-  box.dataset.built = "1";
-  for (const [key, cfg] of Object.entries(LAYERS)) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "chip";
-    b.textContent = cfg.label;
-    b.dataset.layer = key;
-    b.addEventListener("click", () => setLayer(key));
-    box.appendChild(b);
-  }
-  setLayer(MAP.layer);
-}
-
+/* layer chips are built by app.js (it routes clicks to whichever
+   renderer -- globe or this flat map -- is active) */
 function setLayer(key) {
   MAP.layer = key;
   MAP.zoom = Math.min(MAP.zoom, LAYERS[key].maxz);
-  document.querySelectorAll("#layerChips .chip").forEach((c) =>
-    c.setAttribute("aria-pressed", c.dataset.layer === key ? "true" : "false"));
-  document.getElementById("layerNote").textContent = LAYERS[key].note;
   mapDraw();
 }
 

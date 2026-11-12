@@ -186,17 +186,64 @@ $("water").addEventListener("input", (e) => {
 });
 
 /* ---------- map picker & GPS ---------- */
+/* renderer selection: WebGL 3D globe when available, flat map otherwise */
+let PICKER = null;
+function initPicker() {
+  try {
+    if (typeof GLOBE !== "undefined" && GLOBE.init()) {
+      PICKER = GLOBE;
+      document.getElementById("mapCanvas").style.display = "none";
+      return;
+    }
+  } catch (e) { /* fall through to the flat map */ }
+  PICKER = {
+    get pin() { return MAP.pin; },
+    open: mapOpen,
+    stop: () => {},
+    setLayer: (k) => setLayer(k),
+    layer: MAP.layer,
+  };
+}
+function buildChips() {
+  const box = document.getElementById("layerChips");
+  if (!box || box.dataset.built) return;
+  box.dataset.built = "1";
+  for (const [key, cfg] of Object.entries(LAYERS)) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.textContent = cfg.label;
+    b.dataset.layer = key;
+    b.addEventListener("click", () => {
+      PICKER.setLayer(key);
+      if (PICKER === GLOBE) PICKER.layer = key;
+      updateLayerUI(key);
+    });
+    box.appendChild(b);
+  }
+}
+function updateLayerUI(key) {
+  document.querySelectorAll("#layerChips .chip").forEach((c) =>
+    c.setAttribute("aria-pressed", c.dataset.layer === key ? "true" : "false"));
+  document.getElementById("layerNote").textContent = LAYERS[key].note;
+}
 $("btnMap").addEventListener("click", () => {
   const p = $("mapPanel");
   const opening = p.classList.contains("hidden");
   p.classList.toggle("hidden", !opening);
-  if (opening) { mapOpen(); p.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+  if (opening) {
+    buildChips();
+    PICKER.open();
+    updateLayerUI(PICKER.layer || MAP.layer);
+    p.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } else PICKER.stop();
 });
 $("btnUseSpot").addEventListener("click", () => {
-  if (!MAP.pin) { $("mapCoord").textContent = "Tap the map first to drop the pin."; return; }
-  $("lat").value = MAP.pin.lat.toFixed(4);
-  $("lon").value = MAP.pin.lon.toFixed(4);
+  if (!PICKER.pin) { $("mapCoord").textContent = "Tap the map first to drop the pin."; return; }
+  $("lat").value = PICKER.pin.lat.toFixed(4);
+  $("lon").value = PICKER.pin.lon.toFixed(4);
   $("mapPanel").classList.add("hidden");
+  PICKER.stop();
   $("mapCoord").textContent = "No spot chosen yet";
 });
 $("btnGPS").addEventListener("click", () => {
@@ -438,5 +485,5 @@ function render(res) {
 
 /* ---------- boot ---------- */
 initSliders();
-mapInit();
+initPicker();
 
