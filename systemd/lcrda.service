@@ -1,0 +1,20 @@
+# systemd unit for the Live Crop Rotation Decision Aid (LCRDA).
+# Keeps the hub running on the Raspberry Pi 4 and restarts it if it ever
+# crashes. __ROOT__ is replaced by scripts/install.sh with the project path.
+[Unit]
+Description=Live Crop Rotation Decision Aid for Farmers (LCRDA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__
+ExecStart=__ROOT__/venv/bin/python run.py
+Restart=always
+RestartSec=5
+# NASA POWER + ISRIC + the local cache live under data/cache
+# (SQLite, no external services needed at runtime).
+
+[Install]
+WantedBy=multi-user.target
