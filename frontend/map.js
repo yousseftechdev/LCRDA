@@ -93,13 +93,19 @@ function setLayer(key) {
 }
 
 function mapSize() {
-  const c = MAP.canvas, wrap = c.parentElement, dpr = window.devicePixelRatio || 1;
-  const w = wrap.clientWidth || 320;
-  c.style.width = w + "px";
-  c.style.height = Math.round(w / 2) + "px";
-  c.width = Math.round(w * dpr);
-  c.height = Math.round(w / 2 * dpr);
-  MAP.W = w; MAP.H = Math.round(w / 2);
+  const c = MAP.canvas, wrap = c.parentElement;
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(280, wrap.clientWidth || 320);
+  c.style.width = width + "px";
+  c.style.height = Math.round(width / 2) + "px";
+
+  // Canvas drawing coordinates use the CSS content box, not the backing
+  // bitmap or the bordered outer box. Keeping these spaces identical is
+  // essential for accurate pointer -> geographic coordinate conversion.
+  MAP.W = c.clientWidth;
+  MAP.H = c.clientHeight;
+  c.width = Math.round(MAP.W * dpr);
+  c.height = Math.round(MAP.H * dpr);
 }
 
 function clampView() {
@@ -148,15 +154,33 @@ function mapDraw() {
         ctx.drawImage(img, tx * 256 - cxPx + W / 2, ty * 256 - cyPx + H / 2);
     }
   }
-  /* pin */
+  /* A pin whose pointed tip, rather than its centre, marks the exact
+     selected coordinate. The white keyline stays legible on imagery. */
   if (MAP.pin) {
     const px = lonToX(MAP.pin.lon, z) - cxPx + W / 2;
     const py = latToY(MAP.pin.lat, z) - cyPx + H / 2;
-    ctx.strokeStyle = "#B5502F";
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.arc(px, py, 9, 0, 7); ctx.stroke();
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.beginPath();
+    ctx.moveTo(0, 1);
+    ctx.bezierCurveTo(-2, -5, -13, -16, -13, -25);
+    ctx.arc(0, -25, 13, Math.PI, 0, false);
+    ctx.bezierCurveTo(13, -16, 2, -5, 0, 1);
+    ctx.closePath();
+    ctx.shadowColor = "rgba(0, 0, 0, 0.35)";
+    ctx.shadowBlur = 5;
+    ctx.shadowOffsetY = 2;
     ctx.fillStyle = "#B5502F";
-    ctx.beginPath(); ctx.arc(px, py, 4, 0, 7); ctx.fill();
+    ctx.fill();
+    ctx.shadowColor = "transparent";
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -25, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -196,51 +220,85 @@ function bindMapEvents() {
   let dragging = false, moved = 0, last = null, pts = new Map(),
       pinchD0 = null, z0 = 1;
 
+  // PointerEvent.offsetX/Y can jump when pointer capture is active and do
+  // not account consistently for canvas borders or high-DPI sizing.
+  // Convert viewport coordinates into the exact CSS-pixel drawing space.
+  function pointOnCanvas(e) {
+    const rect = c.getBoundingClientRect();
+    const scaleX = MAP.W / Math.max(1, c.clientWidth);
+    const scaleY = MAP.H / Math.max(1, c.clientHeight);
+    return [
+      Math.max(0, Math.min(MAP.W,
+        (e.clientX - rect.left - c.clientLeft) * scaleX)),
+      Math.max(0, Math.min(MAP.H,
+        (e.clientY - rect.top - c.clientTop) * scaleY))
+    ];
+  }
+
   c.addEventListener("pointerdown", (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const point = pointOnCanvas(e);
     c.setPointerCapture(e.pointerId);
-    pts.set(e.pointerId, [e.offsetX, e.offsetY]);
-    if (pts.size === 2) {
+    pts.set(e.pointerId, point);
+    if (pts.size === 1) {
+      dragging = true;
+      moved = 0;
+      last = point;
+    } else if (pts.size === 2) {
       const [a, b] = [...pts.values()];
-      pinchD0 = Math.hypot(a[0] - b[0], a[1] - b[1]); z0 = MAP.zoom;
+      pinchD0 = Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]));
+      z0 = MAP.zoom;
+      moved = 7; // A pinch must never be interpreted as a tap.
     }
-    dragging = true; moved = 0; last = [e.offsetX, e.offsetY];
   });
+
   c.addEventListener("pointermove", (e) => {
-    if (!dragging) return;
-    pts.set(e.pointerId, [e.offsetX, e.offsetY]);
+    if (!pts.has(e.pointerId)) return;
+    const point = pointOnCanvas(e);
+    pts.set(e.pointerId, point);
     if (pts.size === 2 && pinchD0) {
       const [a, b] = [...pts.values()];
-      const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const distance = Math.hypot(a[0] - b[0], a[1] - b[1]);
       MAP.zoom = Math.max(1, Math.min(LAYERS[MAP.layer].maxz,
-        Math.round(z0 * d / pinchD0)));
+        Math.round(z0 * distance / pinchD0)));
       mapDraw();
       return;
     }
-    const dx = e.offsetX - last[0], dy = e.offsetY - last[1];
+    if (pts.size !== 1 || !last) return;
+    const dx = point[0] - last[0], dy = point[1] - last[1];
     moved += Math.abs(dx) + Math.abs(dy);
     if (moved > 6) {
       const z = MAP.zoom;
       MAP.cx = xToLon(lonToX(MAP.cx, z) - dx, z);
       MAP.cy = yToLat(latToY(MAP.cy, z) - dy, z);
-      last = [e.offsetX, e.offsetY];
       mapDraw();
     }
+    last = point;
   });
-  const up = (e) => {
+
+  function finishPointer(e, cancelled) {
+    const point = pointOnCanvas(e);
+    const wasTap = !cancelled && pts.size === 1 && moved <= 6;
     pts.delete(e.pointerId);
     if (pts.size < 2) pinchD0 = null;
+    if (pts.size === 1) {
+      last = [...pts.values()][0];
+      moved = 7;
+    }
     if (pts.size === 0) {
       dragging = false;
-      if (moved <= 6) {
+      last = null;
+      if (wasTap) {
         const z = MAP.zoom;
-        const lon = xToLon(lonToX(MAP.cx, z) - MAP.W / 2 + e.offsetX, z);
-        const lat = yToLat(latToY(MAP.cy, z) - MAP.H / 2 + e.offsetY, z);
+        const lon = xToLon(lonToX(MAP.cx, z) - MAP.W / 2 + point[0], z);
+        const lat = yToLat(latToY(MAP.cy, z) - MAP.H / 2 + point[1]);
         mapSetPin(lat, lon);
       }
     }
-  };
-  c.addEventListener("pointerup", up);
-  c.addEventListener("pointercancel", up);
+  }
+
+  c.addEventListener("pointerup", (e) => finishPointer(e, false));
+  c.addEventListener("pointercancel", (e) => finishPointer(e, true));
   document.getElementById("zoomIn").addEventListener("click",
     () => { MAP.zoom = Math.min(LAYERS[MAP.layer].maxz, MAP.zoom + 1); mapDraw(); });
   document.getElementById("zoomOut").addEventListener("click",
