@@ -195,7 +195,9 @@ function initPicker() {
       document.getElementById("mapCanvas").style.display = "none";
       return;
     }
-  } catch (e) { /* fall through to the flat map */ }
+  } catch (e) {
+    console.warn("3D globe unavailable, using the flat map:", e);
+  }
   PICKER = {
     get pin() { return MAP.pin; },
     open: mapOpen,
@@ -203,6 +205,9 @@ function initPicker() {
     setLayer: (k) => setLayer(k),
     layer: MAP.layer,
   };
+  document.getElementById("spaceCanvas").style.display = "none";
+  document.getElementById("globeCanvas").style.display = "none";
+  document.getElementById("globeOverlay").style.display = "none";
   mapInit();
 }
 function buildChips() {
@@ -371,6 +376,9 @@ function fmtDate(ymd) {
 
 function render(res) {
   $("results").classList.remove("hidden");
+  $("results").classList.remove("reveal");     // restart the one reveal
+  void $("results").offsetWidth;
+  $("results").classList.add("reveal");
   const w = res.winner;
   if (!w) { $("err").textContent = "No suitable crop was found for these "
     + "conditions — try adding more crops in step 2 or adjusting the water."; return; }

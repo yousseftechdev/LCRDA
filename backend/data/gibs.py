@@ -42,6 +42,12 @@ LAYERS = {
              "tms": "GoogleMapsCompatible_Level8", "ext": "png", "maxz": 8},
     "rain": {"ident": "IMERG_Precipitation_Rate",
              "tms": "GoogleMapsCompatible_Level6", "ext": "png", "maxz": 6},
+    # static, date-less NASA Blue Marble base map: the 3D globe underlays
+    # today's true-colour imagery with it, because the daily mosaic has
+    # black polar-night / swath-gap holes that would look broken on a sphere
+    "bluemarble": {"ident": "BlueMarble_NextGeneration",
+                   "tms": "GoogleMapsCompatible_Level8", "ext": "jpg",
+                   "maxz": 8, "static": True},
 }
 
 TILE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
@@ -110,10 +116,12 @@ def _latest_available_date(layer: str, today: dt.date) -> str | None:
 
 
 def warm_hints() -> None:
-    """Pre-resolve the latest available date for every layer (called at
-    server start and hourly, so the first map request never waits)."""
-    for layer in LAYERS:
-        _hint(layer)
+    """Pre-resolve the latest available date for every dated layer (called
+    at server start and hourly, so the first map request never waits).
+    Static layers (no date) are skipped."""
+    for layer, cfg in LAYERS.items():
+        if not cfg.get("static"):
+            _hint(layer)
 
 
 def _hint(layer: str) -> str | None:
@@ -145,7 +153,10 @@ def get_tile(layer: str, z: int, x: int, y: int
     if not (0 <= x < n and 0 <= y < n):
         return None
 
-    hint = _hint(layer)
+    if cfg.get("static"):                      # date-less layer (Blue Marble)
+        hint = "static"
+    else:
+        hint = _hint(layer)
 
     if hint:
         p = _tile_path(layer, hint, z, x, y)
@@ -154,7 +165,8 @@ def get_tile(layer: str, z: int, x: int, y: int
                 return f.read(), f"image/{cfg['ext']}"
         with _fetch_lock:
             if not os.path.isfile(p):               # re-check under lock
-                url = BASE.format(ident=cfg["ident"], date=hint,
+                url = BASE.format(ident=cfg["ident"],
+                                  date="" if cfg.get("static") else hint,
                                   tms=cfg["tms"], z=z, y=y, x=x,
                                   ext=cfg["ext"])
                 try:

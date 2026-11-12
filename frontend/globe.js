@@ -161,13 +161,36 @@ GLOBE.init = function () {
       .addEventListener("change", () => {
         if (!localStorage.getItem("lcrda-theme")) drawSpace();
       });
-  GLOBE.supported = true;
   globeSize();
-  globeStartTexture(GLOBE.layer);       // warm tiles in the background
+  GLOBE.supported = true;       // only claim support once everything above held
+  globeStartTexture(GLOBE.layer); // warm tiles in the background
   return true;
 };
 
 /* ---------- texture: mercator z3 mosaic -> equirectangular ---------- */
+/* A 16x16 thumbnail of a tile; truecolour tiles where the satellite saw
+   nothing (polar night, swath gaps) are pure black -> skip them so the
+   Blue Marble base map underneath shows through (no black holes). */
+function tileHasContent(img) {
+  const t = document.createElement("canvas");
+  t.width = t.height = 16;
+  const x = t.getContext("2d");
+  x.drawImage(img, 0, 0, 16, 16);
+  const d = x.getImageData(0, 0, 16, 16).data;
+  let sum = 0;
+  for (let i = 0; i < d.length; i += 4)
+    sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  return sum / 256 > 13;
+}
+
+/* tile sources for textures (backend proxy layers; includes the
+   static Blue Marble base, which is NOT a display layer) */
+const TILE_SRC = {
+  truecolor: { ext: "jpg" }, soilmoisture: { ext: "png" },
+  temp: { ext: "png" }, ndvi: { ext: "png" }, rain: { ext: "png" },
+  bluemarble: { ext: "jpg" },
+};
+
 function globeStartTexture(layer) {
   const Z = 3, N = 8, T = 256, MW = N * T;          // 2048
   let cache = GLOBE._texCache[layer];
@@ -178,23 +201,36 @@ function globeStartTexture(layer) {
     eq.width = MW; eq.height = MW / 2;              // 2048 x 1024
     cache = GLOBE._texCache[layer] = {
       merc, eq, ctx: merc.getContext("2d"), eqCtx: eq.getContext("2d"),
-      pending: 0, done: false, uploaded: 0,
+      pending: 0, done: false, uploaded: 0, failed: [],
     };
     cache.ctx.fillStyle = "#d7e3ea";
     cache.ctx.fillRect(0, 0, MW, MW);
-    for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++) {
+
+    const finish = () => { if (cache.pending === 0) globeFinishTexture(layer); };
+    const addTile = (srcLayer, tx, ty, isBase) => {
       cache.pending++;
       const img = new Image();
-      img.crossOrigin = "anonymous";
       img.onload = () => {
-        cache.ctx.drawImage(img, tx * T, ty * T);
-        if (--cache.pending === 0) globeFinishTexture(layer);
+        if (!isBase && !tileHasContent(img)) cache.failed.push([tx, ty]);
+        else cache.ctx.drawImage(img, tx * T, ty * T);
+        if (--cache.pending === 0) finish();
         else globeScheduleReproject(layer);
       };
-      img.onerror = () => { if (--cache.pending === 0) globeFinishTexture(layer); };
-      img.src = `/api/maptile/${layer}/${Z}/${tx}/${ty}.${LAYERS[layer].ext}`;
-    }
-    setTimeout(() => { if (!cache.done) globeFinishTexture(layer); }, 25000);
+      img.onerror = () => {
+        if (!isBase) cache.failed.push([tx, ty]);
+        if (--cache.pending === 0) finish();
+      };
+      img.src = `/api/maptile/${srcLayer}/${Z}/${tx}/${ty}.${TILE_SRC[srcLayer].ext}`;
+    };
+    /* today's true-colour imagery has black polar-night / swath holes;
+       the static Blue Marble underneath fills them (truecolour only) */
+    const withBase = layer === "truecolor";
+    if (withBase)
+      for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++)
+        addTile("bluemarble", tx, ty, true);
+    for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++)
+      addTile(layer, tx, ty, false);
+    setTimeout(() => { if (!cache.done) globeFinishTexture(layer); }, 30000);
   }
   if (cache.done) globeUploadTexture(layer);
 }
@@ -229,10 +265,12 @@ function globeReproject(layer) {
   globeUploadTexture(layer);
 }
 
-/* natural-earth outlines wherever tiles failed (offline story) */
+/* natural-earth outlines wherever tiles failed (offline story).
+   Not used for truecolour: its holes are filled by the Blue Marble base. */
 function globeDrawLandFallback(layer) {
   const c = GLOBE._texCache[layer];
   const failed = c.failed || [];
+  if (!failed.length || layer === "truecolor") return;
   if (!failed.length) return;
   const paint = (ctx) => {
     ctx.fillStyle = "#dbe7cf";
@@ -380,21 +418,28 @@ function prefersReducedMotion() {
 function globePick(e) {
   const c = document.getElementById("globeCanvas");
   const r = c.getBoundingClientRect();
-  const dpr = GLOBE._dpr || 1;
-  const px = (e.clientX - r.left) * dpr, py = (e.clientY - r.top) * dpr;
+  if (!r.width) return;                    // canvas hidden (flat fallback)
+  /* map CSS px -> bitmap px by the actual ratio (robust even if the
+     bitmap and the CSS box were sized at different moments) */
+  const scale = c.width / Math.max(1, r.width);
+  const px = (e.clientX - r.left) * scale, py = (e.clientY - r.top) * scale;
   const W = c.width, H = c.height, D = GLOBE.dist;
   const nx = (px / W) * 2 - 1, ny = 1 - (py / H) * 2;
   const t = Math.tan(FOV / 2);
   let d = [nx * t, ny * t, -1];
   const L = Math.hypot(d[0], d[1], d[2]); d = d.map((v) => v / L);
   const O = [0, 0, D];
-  const a = d[2] * d[2], b = 2 * (O[0] * d[0] + O[1] * d[1] + O[2] * d[2]),
+  const a = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];   /* |dir|^2 (=1) */
+  const b = 2 * (O[0] * d[0] + O[1] * d[1] + O[2] * d[2]),
         cc = D * D - 1;
   const disc = b * b - 4 * a * cc;
   if (disc < 0) return;                       // tapped space, not the globe
   const hit = (-b - Math.sqrt(disc)) / (2 * a);
   if (hit <= 0) return;
   const w = [O[0] + hit * d[0], O[1] + hit * d[1], O[2] + hit * d[2]];
+  /* w is on the unit sphere by construction (round-trip check) */
+  const wLen = Math.hypot(w[0], w[1], w[2]);
+  w[0] /= wLen; w[1] /= wLen; w[2] /= wLen;
   const Minv = mul3(rotY(-GLOBE.yaw), rotX(-GLOBE.pitch));
   const p = apply3(Minv, w);
   const lat = Math.asin(Math.max(-1, Math.min(1, p[1]))) / RAD;
@@ -415,6 +460,7 @@ GLOBE.open = function () {
   }
   GLOBE._openedOnce = true;
   globeSize();
+  requestAnimationFrame(globeSize);   // catch late layout of the panel
   globeStartTexture(GLOBE.layer);
   globeLand();
   globeLoadCities();
