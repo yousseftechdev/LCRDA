@@ -33,7 +33,11 @@ const worldPx = (z) => 256 * Math.pow(2, z);
 const lonToX = (lon, z) => (lon + 180) / 360 * worldPx(z);
 function latToY(lat, z) {
   const r = Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180;
-  return (0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / Math.PI) * worldPx(z);
+  /* standard slippy formula: ln(tan(pi/4 + lat/2)) == asinh(tan lat),
+     and the normalisation is 2*pi (NOT pi) -- dividing by pi put taps
+     at grossly wrong latitudes */
+  return (0.5 - Math.log(Math.tan(Math.PI / 4 + r / 2)) / (2 * Math.PI))
+    * worldPx(z);
 }
 const xToLon = (x, z) => x / worldPx(z) * 360 - 180;
 function yToLat(y, z) {
@@ -63,8 +67,8 @@ function mapOpen(onPick) {
   } else {
     MAP.pin = null; MAP.cx = 20; MAP.cy = 20; MAP.zoom = 2;
   }
+  mapSize(); mapDraw();        // size FIRST: setLayer() draws immediately
   renderLayerChips();
-  mapSize(); mapDraw();
 }
 
 function renderLayerChips() {
@@ -109,6 +113,7 @@ function mapSize() {
 }
 
 function clampView() {
+  if (!MAP.W || !MAP.H) return;      // not sized yet -- nothing to clamp
   const z = MAP.zoom, W = MAP.W, H = MAP.H;
   const spanLon = W / worldPx(z) * 360;
   if (spanLon < 360) {
@@ -238,7 +243,7 @@ function bindMapEvents() {
   c.addEventListener("pointerdown", (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const point = pointOnCanvas(e);
-    c.setPointerCapture(e.pointerId);
+    try { c.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointers */ }
     pts.set(e.pointerId, point);
     if (pts.size === 1) {
       dragging = true;
@@ -291,7 +296,7 @@ function bindMapEvents() {
       if (wasTap) {
         const z = MAP.zoom;
         const lon = xToLon(lonToX(MAP.cx, z) - MAP.W / 2 + point[0], z);
-        const lat = yToLat(latToY(MAP.cy, z) - MAP.H / 2 + point[1]);
+        const lat = yToLat(latToY(MAP.cy, z) - MAP.H / 2 + point[1], z);
         mapSetPin(lat, lon);
       }
     }
