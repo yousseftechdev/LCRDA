@@ -55,6 +55,7 @@ function mapInit() {
   });
   bindMapEvents();
   window.addEventListener("resize", () => { mapSize(); mapDraw(); });
+  window.addEventListener("themechange", mapDraw);
 }
 
 function mapOpen(onPick) {
@@ -122,13 +123,14 @@ function mapDraw() {
   if (!MAP.ctx) return;
   clampView();
   const ctx = MAP.ctx, W = MAP.W, H = MAP.H, z = MAP.zoom;
+  const dark = document.documentElement.dataset.theme === "dark";
   ctx.setTransform(window.devicePixelRatio || 1, 0, 0,
                    window.devicePixelRatio || 1, 0, 0);
   /* sea */
-  ctx.fillStyle = "#E3EDF2";
+  ctx.fillStyle = dark ? "#16211B" : "#E3EDF2";
   ctx.fillRect(0, 0, W, H);
   /* land shapes (offline fallback under the imagery) */
-  if (MAP.land) drawLand(ctx, z);
+  if (MAP.land) drawLand(ctx, z, dark);
   /* NASA satellite imagery tiles */
   const cxPx = lonToX(MAP.cx, z), cyPx = latToY(MAP.cy, z);
   const x0 = Math.floor((cxPx - W / 2) / 256), x1 = Math.floor((cxPx + W / 2) / 256);
@@ -171,10 +173,10 @@ function mapDraw() {
   }
 }
 
-function drawLand(ctx, z) {
+function drawLand(ctx, z, dark) {
   const cxPx = lonToX(MAP.cx, z), cyPx = latToY(MAP.cy, z);
-  ctx.fillStyle = "#DCE7D0";
-  ctx.strokeStyle = "#9DB48F";
+  ctx.fillStyle = dark ? "#233024" : "#DCE7D0";
+  ctx.strokeStyle = dark ? "#3C4A3A" : "#9DB48F";
   ctx.lineWidth = 1;
   for (const f of MAP.land) {
     const polys = f.geometry.type === "Polygon"

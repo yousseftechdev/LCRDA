@@ -155,6 +155,12 @@ GLOBE.init = function () {
 
   globeBindEvents(canvas);
   window.addEventListener("resize", globeSize);
+  window.addEventListener("themechange", drawSpace);
+  if (window.matchMedia)
+    window.matchMedia("(prefers-color-scheme: dark)")
+      .addEventListener("change", () => {
+        if (!localStorage.getItem("lcrda-theme")) drawSpace();
+      });
   GLOBE.supported = true;
   globeSize();
   globeStartTexture(GLOBE.layer);       // warm tiles in the background

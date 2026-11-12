@@ -203,6 +203,7 @@ function initPicker() {
     setLayer: (k) => setLayer(k),
     layer: MAP.layer,
   };
+  mapInit();
 }
 function buildChips() {
   const box = document.getElementById("layerChips");
@@ -482,6 +483,14 @@ function render(res) {
   dl.textContent = dataLine;
   $("summary").querySelector(".rec-card").appendChild(dl);
 }
+
+/* ---------- theme (dark mode) ---------- */
+$("themeToggle").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem("lcrda-theme", next); } catch (e) {}
+  window.dispatchEvent(new Event("themechange"));
+});
 
 /* ---------- boot ---------- */
 initSliders();

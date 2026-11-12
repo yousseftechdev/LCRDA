@@ -280,6 +280,18 @@ SoilGrids (ISRIC) data public — cite in PDF. AquaCrop math: FAO. AHP/TOPSIS: S
   - /health 404 FIXED: root cause = the route was only /api/health and
     the user's manual `python run.py` instance answered /health 404;
     added /health alias; both return 200 through the service now.
+- [2026-11-12] COMMIT 3 -- DARK MODE (manual toggle + system default):
+  * Inline <head> script sets data-theme before first paint (localStorage
+    "lcrda-theme", else prefers-color-scheme) -- no flash of wrong theme.
+  * CSS: full [data-theme="dark"] palette override (paper/ink/leaf/sky/
+    clay/line/card...); hardcoded #fff backgrounds swept to var(--card)
+    (inputs, chips, seg, slider thumb ring); meta color-scheme set.
+  * Header: round moon/sun SVG toggle (top-right, SVG swaps on theme),
+    app.js wires click -> toggle + persist + "themechange" event.
+  * Canvases theme-aware: globe.js redraws space backdrop (stars only in
+    dark; brighter rim); map.js flat map sea/land colors adapt.
+  * VERIFIED headless screenshots: light + dark both correct (inputs,
+    cards, chips, sliders, toggle icon swap).
 - [2026-11-12] COMMIT 2 -- 3D GLOBE IMPLEMENTED (frontend/globe.js, ~450
   lines, zero deps, raw WebGL):
   * Unit sphere (48x72 grid), shaders: equirect imagery sample + sun

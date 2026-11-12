@@ -3,7 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Live Crop Rotation Decision Aid</title>
+<script>
+/* theme before first paint: saved choice, else system preference */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("lcrda-theme"); } catch (e) {}
+  if (t !== "dark" && t !== "light")
+    t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = t;
+})();
+</script>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -15,6 +26,11 @@
   </a>
   <p class="tagline">Advice for what to plant next — built on NASA satellite
   data and FAO crop science. Works without internet.</p>
+  <button id="themeToggle" class="theme-toggle" type="button"
+    aria-label="Switch between light and dark mode">
+    <svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.3 14.2A8.6 8.6 0 0 1 9.8 3.7a8.6 8.6 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    <svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+  </button>
 </header>
 
 <main>
