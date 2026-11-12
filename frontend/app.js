@@ -59,8 +59,13 @@ function initSliders() {
       + `<div class="ends"><span>Not important</span><span>Very important</span></div>`
       + `<div class="whatdetail">${p.what}</div>`;
     box.appendChild(row);
+    const inp = row.querySelector("input");
     const btn = row.querySelector(".whatbtn");
     const det = row.querySelector(".whatdetail");
+    const setFill = (el) =>
+      el.style.setProperty("--p", (Number(el.value) - 1) / 4);
+    setFill(inp);
+    inp.addEventListener("input", () => setFill(inp));
     btn.addEventListener("click", () => {
       const open = det.classList.toggle("open");
       btn.setAttribute("aria-expanded", open);

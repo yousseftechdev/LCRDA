@@ -120,7 +120,42 @@ button:active { transform: translateY(1px); }
   background: #fff; border-radius: 50%; width: 26px; height: 26px;
   font-weight: 800; font-size: 0.8rem; padding: 0; line-height: 1;
 }
-.sliderrow input[type="range"] { width: 100%; accent-color: var(--leaf); margin-top: 4px; }
+/* ---------- priority sliders ----------
+   Custom-styled so the thumb sits flush at BOTH ends (the default widget
+   leaves a half-thumb gap, which made the extremes hard to reach/see).
+   The fill is driven by --p (0..1) set from app.js. */
+.sliderrow input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 28px; background: transparent;
+  margin: 2px 0 0; padding: 0; border: none;
+}
+.sliderrow input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px; border-radius: 4px;
+  background: linear-gradient(to right,
+    var(--leaf) 0, var(--leaf) calc(var(--p, 0.5) * (100% - 22px) + 11px),
+    var(--line) calc(var(--p, 0.5) * (100% - 22px) + 11px), var(--line) 100%);
+}
+.sliderrow input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--leaf); border: 3px solid #fff;
+  box-shadow: 0 1px 3px rgba(30, 74, 35, 0.4);
+  margin-top: -7px;
+}
+.sliderrow input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 3px solid var(--sun); outline-offset: 1px;
+}
+.sliderrow input[type="range"]::-moz-range-track {
+  height: 8px; border-radius: 4px;
+  background: linear-gradient(to right,
+    var(--leaf) 0, var(--leaf) calc(var(--p, 0.5) * (100% - 22px) + 11px),
+    var(--line) calc(var(--p, 0.5) * (100% - 22px) + 11px), var(--line) 100%);
+}
+.sliderrow input[type="range"]::-moz-range-thumb {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--leaf); border: 3px solid #fff;
+  box-shadow: 0 1px 3px rgba(30, 74, 35, 0.4);
+}
 .ends { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--ink-soft); }
 .whatdetail {
   display: none; margin-top: 6px; padding: 10px 12px;
@@ -162,10 +197,15 @@ button:active { transform: translateY(1px); }
   margin-top: 10px; background: var(--leaf-wash);
   border-radius: var(--radius); padding: 10px;
 }
+.mappanel .chips { margin: 0 0 4px; }
+.mappanel .chip { background: #fff; }
+.mappanel .chip[aria-pressed="true"] { background: var(--leaf); color: #fff; border-color: var(--leaf-dark); }
+#layerNote { margin: 2px 0 8px; }
 .mapbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
 .mapbar .hint { margin: 0; }
 .mapzoom { display: flex; gap: 4px; }
 .mapzoom button { width: 34px; height: 34px; padding: 0; font-weight: 800; font-size: 1.1rem; border-radius: 8px; }
+.mapcanvaswrap { width: 100%; }
 #mapCanvas { display: block; border-radius: 8px; border: 1px solid var(--line);
   touch-action: none; cursor: crosshair; }
 .mapfoot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 8px; }

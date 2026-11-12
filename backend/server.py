@@ -7,7 +7,7 @@ Raspberry Pi 4 can host it with no pip installs:
     python3 run.py             -> http://<pi-ip>:8000/
 
 API:
-  GET  /api/health                  -> {"status":"ok", cache entries...}
+  GET  /api/health  (alias: /health) -> {"status":"ok", cache entries...}
   GET  /api/crops?q=maiz            -> crop search (EcoCrop DB)
   POST /api/recommend               -> full MCDM recommendation
        body: {"lat":..,"lon":..,"shortlist":["zea-mays",...] or null,
@@ -20,6 +20,9 @@ API:
        response echoes "waterMode" ("rain"/"irrigate"), "waterAvailableMM",
        and includes "closeCall" (runner-up when SAW/TOPSIS disagree).
   POST /api/refresh                 -> force NASA/SoilGrids refetch
+  GET  /api/maptile/<layer>/<z>/<x>/<y>.<ext>
+                                    -> daily NASA GIBS satellite map tile,
+       cached on disk (today's imagery; offline serves the newest cached day)
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(
 
 from . import app as pipeline            # noqa: E402
 from .data import crops as cropdb        # noqa: E402
+from .data import gibs                   # noqa: E402
 from . import storage                    # noqa: E402
 
 
@@ -71,9 +75,34 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     # ---------------- routes ----------------
+    def _maptile(self) -> None:
+        """GET /api/maptile/<layer>/<z>/<x>/<y>.<ext> -> NASA GIBS tile
+        (daily imagery, disk-cached; offline serves newest cached day)."""
+        parts = self.path.strip("/").split("/")
+        try:
+            layer, z, x = parts[2], int(parts[3]), int(parts[4])
+            y, ext = parts[5].split(".")
+            y = int(y)
+        except (IndexError, ValueError):
+            self._json({"error": "bad tile path"}, 400)
+            return
+        got = gibs.get_tile(layer, z, x, y)
+        if got is None:
+            self.send_error(404)
+            return
+        body, ctype = got
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802
-        if self.path.startswith("/api/health"):
+        if self.path.startswith("/api/health") or self.path == "/health":
             self._json({"status": "ok", "cache": storage.status()})
+        elif self.path.startswith("/api/maptile/"):
+            self._maptile()
         elif self.path.startswith("/api/crops"):
             q = ""
             if "?" in self.path:
@@ -160,6 +189,7 @@ def _background_refresher() -> None:
     import time
     while True:
         try:
+            gibs.warm_hints()               # keep imagery dates fresh
             now = _dt.datetime.now()
             for entry in storage.status():
                 if entry["dataset"] != "power_daily":
@@ -170,6 +200,11 @@ def _background_refresher() -> None:
                           f"{entry['lat']},{entry['lon']}")
                     pipeline.get_climate(entry["lat"], entry["lon"],
                                          force_refresh=True)
+            # housekeeping: drop map-imagery days older than a week
+            removed = gibs.cleanup_old_tiles(keep_days=8)
+            if removed:
+                print(f"[hub] tile housekeeping: removed {removed} old "
+                      f"imagery days")
         except Exception as e:          # never kill the daemon thread
             print(f"[hub] background refresh error: {e}")
         time.sleep(3600)

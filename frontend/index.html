@@ -32,6 +32,8 @@
       <button id="btnGPS" class="ghost" type="button">Use my location</button>
     </div>
     <div id="mapPanel" class="mappanel hidden">
+      <div id="layerChips" class="chips" role="group" aria-label="Map layer"></div>
+      <p id="layerNote" class="hint"></p>
       <div class="mapbar">
         <span class="hint">Tap the map to drop the pin, drag to move,
         pinch or use + to zoom.</span>
@@ -40,11 +42,15 @@
           <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
         </span>
       </div>
-      <canvas id="mapCanvas" aria-label="World map for picking your field location"></canvas>
+      <div class="mapcanvaswrap">
+        <canvas id="mapCanvas" aria-label="Satellite map for picking your field location"></canvas>
+      </div>
       <div class="mapfoot">
         <span id="mapCoord" class="statusline">No spot chosen yet</span>
         <button id="btnUseSpot" class="use-spot" type="button">Use this spot</button>
       </div>
+      <p class="hint quiet small">Imagery: NASA GIBS / Worldview — today's
+      pictures, stored on this hub daily so the map works offline too.</p>
     </div>
     <div class="datarow">
       <button id="btnFetch" class="ghost" type="button">Check the satellite data</button>
@@ -115,8 +121,10 @@
         <li><b>Weather:</b> daily satellite records for your exact spot from
         NASA POWER (temperature, rain, sun, wind, humidity), updated every day
         and stored on this device — the advice works with no internet.</li>
-        <li><b>Map:</b> world map outlines from Natural Earth (public domain),
-        stored on this device so the location picker works offline.</li>
+        <li><b>Map:</b> daily NASA satellite imagery via NASA GIBS /
+        Worldview (MODIS, SMAP, VIIRS, IMERG), fetched once a day and
+        stored on this hub; world outlines from Natural Earth (public
+        domain) as the offline fallback.</li>
         <li><b>Soil:</b> the SoilGrids world soil map (acidity, sand, clay)
         for your spot.</li>
         <li><b>Crop science:</b> what each crop needs to grow, from the FAO

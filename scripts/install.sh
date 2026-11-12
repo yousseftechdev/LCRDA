@@ -29,8 +29,8 @@ if [ "$MODE" = "--user" ]; then
   echo "* Service installed (user mode): systemctl --user status lcrda"
 else
   UNIT_DIR="/etc/systemd/system"
-  sed -e "s|__ROOT__|$ROOT|g" systemd/lcrda.service | \
-      sudo tee "$UNIT_DIR/lcrda.service" > /dev/null
+  sed -e "s|__ROOT__|$ROOT|g" -e "s|__USER__|$USER|g" \
+      systemd/lcrda.service | sudo tee "$UNIT_DIR/lcrda.service" > /dev/null
   sudo systemctl daemon-reload
   sudo systemctl enable --now lcrda.service
   echo "* Service installed (system mode): sudo systemctl status lcrda"
