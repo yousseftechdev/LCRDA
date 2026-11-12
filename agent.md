@@ -394,6 +394,58 @@ SoilGrids (ISRIC) data public — cite in PDF. AquaCrop math: FAO. AHP/TOPSIS: S
   - Verified visually with headless Chromium (map renders, pin drops,
     confirm fills lat/lon: 32.0189/34.6655, panel closes). Attribution
     added to the in-UI sources section + README.
+- [2026-11-12] SESSION 5 -- GLOBE SWATH-GAP FIX COMPLETED + UI POLISH
+  (user request re-stated: dark mode toggle (already shipped, commit
+  04affbc), finish/fix the 3D globe (already WebGL, no Cesium Ion --
+  offline-first hub must not call a cloud service), improve the UI
+  per the design skills. agent.md consulted; continued from the half
+  done state at b11453d.)
+  * GLOBE TEXTURE HEALING (the "slashes"): raw GIBS true-colour for
+    2026-11-12 has black polar-night rows and diagonal MODIS swath-gap
+    wedges inside tiles. Final architecture in frontend/globe.js:
+    - healTile(): per-tile progressive heal for immediate display
+      (horizontal lerp between nearest valid row pixels; Blue Marble
+      only for whole-gap rows).
+    - healMosaic(): seam-free WHOLE-MOSAIC final pass run once in
+      globeFinishTexture() once all 64 tiles are in. Cache keeps extra
+      truecolour state: raw/rawCtx (unhealed 2048^2), mask (Uint8Array,
+      gap=1), bmMos/bmMosCtx (Blue Marble mosaic). gapMaskOf(),
+      blitMask(), dilateMask() helpers.
+    - Final fill rules: mask DILATED 2 px first (JPEG halo greys around
+      gaps caused hatching); narrow runs (<= MAXRUN 32) = horizontal
+      lerp; wide runs (polar night, broad wedges) = Blue Marble
+      GAIN-MATCHED per row (target = mean of up to 8 flanking px/side,
+      gain clamped 0.4..2.5 -- single flanking px striped the fill);
+      whole-filled region then softened with a 5x5 local average
+      (removes comb banding of straight ramps against grainy imagery).
+    - Gap rule (shared): sum<36 || (sum<90 && chroma<12) -- dark ocean
+      is blue-tinted and survives.
+    - Also: removed border-radius 50% clip; camera dist 2.4..6.0
+      (open default 3.4, idle 3.6); satellite projected in WORLD space
+      via globeProjectWorld(); null-guard in globeDrawLandFallback;
+      warm-start deferred from GLOBE.init() to GLOBE.open().
+  * SERVER WARM-UP: gibs.warm_mosaic() pre-fetches the z3 8x8 mosaics
+    (truecolor + bluemarble) at startup + daily in the refresher, so
+    first globe open is cache-complete.
+  * JPEG-decode equivalence PROVEN (Chrome == PIL, identical pixels on
+    the same bytes) -- earlier contradictions were harness artifacts.
+  * DARK-MODE CONTRAST FIX (style.css): new tokens --leaf-ink,
+    --btn-ink, --ok-ink (light #1E4A23 / dark #8FCB93 etc.); replaced
+    unreadable var(--leaf-dark) text usages.
+  * UI POLISH: chips padding 10x15, .whatbtn 30px, h2 1.25rem,
+    .rec-name 1.9rem, sticky .actionbar, .plan-season pill, visible
+    grade word next to score, .rec-facts 2-col grid, shortened harvest
+    note "(comparison only)", footer rewritten, renderer-specific
+    picker hint text. touch-action manipulation.
+  * VERIFIED: 35/35 tests; E2E /api/recommend (shortlist keys are
+    EcoCrop keys, e.g. cucumis-sativus -- winner Cucumis sativus 0.80
+    with 400 mm irrigation); headless screenshots light+dark: globe
+    heals into natural-looking imagery (no black wedges, no stripes),
+    results pages render the facts grid + grade words in both themes.
+  * DECISION RECORDED: NOT replacing the globe with Cesium Ion --
+    Ion needs an API key + cloud round-trips; the hub is offline-first
+    (must run on a LAN Raspberry Pi). The zero-dependency WebGL globe
+    is complete and working.
 
 ## 4.1 IMPLEMENTATION STATUS
 - [x] agent.md (this file)
