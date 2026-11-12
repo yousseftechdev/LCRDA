@@ -189,10 +189,12 @@ $("water").addEventListener("input", (e) => {
 /* renderer selection: WebGL 3D globe when available, flat map otherwise */
 let PICKER = null;
 function initPicker() {
+  const hint = document.querySelector(".mapbar .hint");
   try {
     if (typeof GLOBE !== "undefined" && GLOBE.init()) {
       PICKER = GLOBE;
       document.getElementById("mapCanvas").style.display = "none";
+      if (hint) hint.textContent = "Tap the globe to drop the pin, drag to spin it, pinch or use + to zoom.";
       return;
     }
   } catch (e) {
@@ -208,6 +210,7 @@ function initPicker() {
   document.getElementById("spaceCanvas").style.display = "none";
   document.getElementById("globeCanvas").style.display = "none";
   document.getElementById("globeOverlay").style.display = "none";
+  if (hint) hint.textContent = "Tap the map to drop the pin, drag to move it, pinch or use + to zoom.";
   mapInit();
 }
 function buildChips() {
@@ -359,6 +362,7 @@ function scoreBars(crit, prefix) {
     html += `<div class="score" ${prefix ? `data-for="${prefix}${i}"` : ""}>`
       + `<span class="lbl">${names[i]}</span>`
       + `<span class="bars" role="img" aria-label="${names[i]}: ${grade} (${Math.round(v*100)} out of 100)">${bars}</span>`
+      + `<span class="grade" aria-hidden="true">${grade}</span>`
       + `</div>`;
   }
   return html;
@@ -388,9 +392,11 @@ function render(res) {
   const irr = res.waterMode === "irrigate";
   const waterNote = irr
     ? (w.nir_mm <= res.waterAvailableMM
-        ? `Drinks about ${litPerM2(w.nir_mm)} over the season — your supply covers it.`
-        : `Drinks about ${litPerM2(w.nir_mm)} over the season — that is more than you said you have, so some watering weeks will be tight.`)
-    : `In this season it would drink about ${litPerM2(w.nir_mm)} if you had to water it yourself.`;
+        ? "Your water supply covers this crop's season."
+        : "That is more water than you said you have, so some watering weeks will be tight.")
+    : "That is what it would drink in this season if you had to water it yourself.";
+  const fact = (k, v) =>
+    `<div><span class="k">${k}</span><span class="v">${v}</span></div>`;
 
   const whyBits = [];
   if (w.n_fixing) whyBits.push("feeds the soil with nitrogen for the next crop");
@@ -402,11 +408,14 @@ function render(res) {
     <div class="rec-card">
       <p class="rec-kicker">Plant this next</p>
       <p class="rec-name">${niceName(w)}</p>
-      <p class="rec-sub">${sow ? `Best sowing window opens around <b>${fmtDate(sow)}</b>, `
-        + `and it needs about <b>${w.days_to_harvest} days</b> in the field.<br>` : ""}
-      ${waterNote}<br>
-      Expected harvest: about <b>${w.yield_t_ha} tons per hectare</b>
-      <span class="quiet small">(a comparison between crops, not a promise)</span></p>
+      <div class="rec-facts">
+        ${sow ? fact("Sowing window opens", "around " + fmtDate(sow)) : ""}
+        ${fact("Days in the field", w.days_to_harvest + " days")}
+        ${fact("Water over the season", litPerM2(w.nir_mm))}
+        ${fact("Expected harvest", `${w.yield_t_ha} t/ha `
+          + `<span class="note">(comparison only)</span>`)}
+      </div>
+      <p class="rec-sub">${waterNote}</p>
       <div class="scorecard">${scoreBars(w.criteria)}</div>
       ${whyBits.length ? `<p class="rec-sub">Why this one: ${whyBits.join("; ")}.</p>` : ""}
       ${res.closeCall ? `<div class="closecall">This is a close call with `

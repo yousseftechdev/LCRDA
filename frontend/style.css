@@ -8,6 +8,11 @@
   --leaf: #2E6B34;
   --leaf-dark: #1E4A23;
   --leaf-wash: #EEF3EA;
+  /* text tokens: the same hue family as --leaf but guaranteed readable
+     on --card in BOTH themes (dark --leaf-dark on --card is invisible) */
+  --leaf-ink: #1E4A23;
+  --btn-ink: #1E4A23;
+  --ok-ink: #1E4A23;
   --sun: #E8A61B;
   --sun-soft: #F7E3B0;
   --sky: #3B7EA1;
@@ -28,6 +33,9 @@
   --leaf: #5BA05F;
   --leaf-dark: #18251A;
   --leaf-wash: #20291F;
+  --leaf-ink: #8FCB93;
+  --btn-ink: #D9E4D4;
+  --ok-ink: #8FCB93;
   --sun: #E8A61B;
   --sun-soft: #4A3A12;
   --sky: #6FA9C8;
@@ -88,7 +96,7 @@ main { max-width: 640px; margin: 0 auto; padding: 4px 14px 20px; }
   box-shadow: var(--shadow-soft);
 }
 .step-last { margin-bottom: 4px; }
-h2 { font-size: 1.18rem; font-weight: 800; margin: 0 0 8px; display: flex; align-items: center; gap: 10px; }
+h2 { font-size: 1.25rem; font-weight: 800; margin: 0 0 8px; display: flex; align-items: center; gap: 10px; }
 h3 { font-size: 0.95rem; font-weight: 700; margin: 14px 0 6px; }
 .stepnum {
   flex: none; width: 28px; height: 28px; border-radius: 50%;
@@ -119,8 +127,9 @@ input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-v
 button {
   font: inherit; cursor: pointer;
   border: 1.5px solid var(--leaf); border-radius: 10px;
-  background: var(--card); color: var(--leaf-dark);
+  background: var(--card); color: var(--btn-ink);
   padding: 9px 14px;
+  touch-action: manipulation;
   transition: background 0.18s ease, border-color 0.18s ease,
               box-shadow 0.18s ease, transform 0.08s ease;
 }
@@ -141,7 +150,7 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 .ghost { border-color: var(--line); color: var(--ink); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
-.chip { border-radius: 999px; padding: 8px 14px; font-size: 0.88rem; transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease; }
+.chip { border-radius: 999px; padding: 10px 15px; font-size: 0.88rem; transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease; }
 .chip[aria-pressed="true"] { background: var(--leaf); color: #fff; border-color: var(--leaf-dark); }
 .chips-amount .chip { border-color: var(--sky); color: var(--sky); }
 .chips-amount .chip[aria-pressed="true"] { background: var(--sky); color: #fff; border-color: var(--sky); }
@@ -167,8 +176,8 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 .sliderrow .name { font-weight: 700; font-size: 0.95rem; }
 .whatbtn {
   flex: none; border: 1.5px solid var(--line); color: var(--ink-soft);
-  background: var(--card); border-radius: 50%; width: 26px; height: 26px;
-  font-weight: 800; font-size: 0.8rem; padding: 0; line-height: 1;
+  background: var(--card); border-radius: 50%; width: 30px; height: 30px;
+  font-weight: 800; font-size: 0.85rem; padding: 0; line-height: 1;
 }
 /* ---------- priority sliders ----------
    Custom-styled so the thumb sits flush at BOTH ends (the default widget
@@ -213,7 +222,7 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
   font-size: 0.84rem; color: var(--ink-soft);
 }
 .whatdetail.open { display: block; }
-.whatdetail .src { color: var(--leaf-dark); font-weight: 600; }
+.whatdetail .src { color: var(--leaf-ink); font-weight: 600; }
 
 /* market radios */
 .marketrow { padding: 7px 0; border-bottom: 1px dashed var(--line); }
@@ -226,7 +235,12 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 .segopts button[aria-pressed="true"] { background: var(--sun-soft); border-color: var(--sun); color: var(--ink); font-weight: 700; }
 
 /* ---------- action bar ---------- */
-.actionbar { position: sticky; bottom: 0; padding: 10px 0 2px; z-index: 5; }
+.actionbar {
+  position: sticky; bottom: 0; z-index: 5;
+  background: var(--paper);
+  padding: 10px 0 12px;
+  margin: 0 -2px;
+}
 .primary {
   width: 100%; padding: 15px; font-size: 1.1rem; font-weight: 800;
   background: var(--leaf); color: #fff; border: none;
@@ -238,7 +252,7 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
 
 .error { color: var(--clay); font-size: 0.9rem; margin: 10px 2px; min-height: 1em; }
 .statusline { font-size: 0.82rem; color: var(--ink-soft); }
-.statusline.ok { color: var(--leaf-dark); font-weight: 600; }
+.statusline.ok { color: var(--ok-ink); font-weight: 600; }
 .statusline.warn { color: var(--clay); }
 .datarow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 
@@ -301,18 +315,29 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
   box-shadow: var(--shadow-soft);
 }
 .rec-kicker { font-size: 0.8rem; font-weight: 700; color: var(--ink-soft); margin: 0 0 2px; }
-.rec-name { font-size: 1.65rem; font-weight: 800; color: var(--leaf-dark); margin: 0; line-height: 1.15; }
+.rec-name { font-size: 1.9rem; font-weight: 800; color: var(--leaf-ink); margin: 0; line-height: 1.15; }
 .rec-sub { margin: 8px 0 0; font-size: 0.9rem; }
 .rec-sub b { font-weight: 700; }
 
+/* quick facts: the four numbers a farmer scans first, in one grid */
+.rec-facts {
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px;
+}
+.rec-facts .k { display: block; font-size: 0.74rem; font-weight: 600; color: var(--ink-soft); }
+.rec-facts .v { display: block; font-size: 0.98rem; font-weight: 700; margin-top: 1px; }
+.rec-facts .note { font-weight: 400; font-size: 0.74rem; color: var(--ink-soft); }
+
 .scorecard { margin-top: 14px; display: grid; gap: 9px; }
-.score { display: grid; grid-template-columns: 108px 1fr; gap: 10px; align-items: center; }
+.score { display: grid; grid-template-columns: 108px 1fr auto; gap: 10px; align-items: center; }
 .score .lbl { font-size: 0.82rem; font-weight: 700; }
 .bars { display: flex; gap: 4px; }
 .bar { height: 10px; flex: 1; border-radius: 5px; background: var(--leaf-wash); }
 .bar.f { background: var(--leaf); }
 .bar.warn { background: var(--sun); }
 .bar.bad { background: var(--clay); }
+.score .grade { font-size: 0.75rem; color: var(--ink-soft); white-space: nowrap; }
 .score .note { grid-column: 2; font-size: 0.78rem; color: var(--ink-soft); margin-top: -4px; }
 
 .closecall {
@@ -325,8 +350,12 @@ button:focus-visible { outline: 3px solid var(--sun); outline-offset: 2px; }
   padding: 16px; margin: 12px 0;
 }
 .plan-card h3, .others-card h3 { margin: 0 0 8px; font-size: 1rem; font-weight: 800; }
-.planrow { display: flex; align-items: baseline; gap: 8px; margin: 8px 0; }
-.plan-season { flex: none; width: 74px; font-size: 0.78rem; font-weight: 800; color: var(--leaf-dark); }
+.planrow { display: flex; align-items: baseline; gap: 10px; margin: 10px 0; }
+.plan-season {
+  flex: none; font-size: 0.74rem; font-weight: 800;
+  color: var(--leaf-ink);
+  background: var(--leaf-wash); border-radius: 999px; padding: 3px 10px;
+}
 .plan-crop { font-weight: 700; }
 .plan-why { font-size: 0.8rem; color: var(--ink-soft); }
 .arrow { color: var(--ink-soft); flex: none; }
