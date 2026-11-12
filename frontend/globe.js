@@ -12,8 +12,9 @@ const GLOBE = {
   supported: false,
   layer: "truecolor",
   pin: null,
-  // view state
-  yaw: 0, pitch: 0, dist: 3.0,
+  // view state (dist = camera distance; 3.4 frames the whole globe with
+  // a margin, 2.4 is a comfortable zoom-in, 6 a comfortable zoom-out)
+  yaw: 0, pitch: 0, dist: 3.4,
   _raf: 0, _running: false,
   _lastInteract: 0,
   _cities: null, _citiesPromise: null,
@@ -163,7 +164,9 @@ GLOBE.init = function () {
       });
   globeSize();
   GLOBE.supported = true;       // only claim support once everything above held
-  globeStartTexture(GLOBE.layer); // warm tiles in the background
+  /* imagery is NOT warmed here: 128 tile requests at page load would
+     hammer the hub for visitors who never open the picker; GLOBE.open()
+     starts the texture the moment the panel is used */
   return true;
 };
 
@@ -202,37 +205,342 @@ function globeStartTexture(layer) {
     cache = GLOBE._texCache[layer] = {
       merc, eq, ctx: merc.getContext("2d"), eqCtx: eq.getContext("2d"),
       pending: 0, done: false, uploaded: 0, failed: [],
+      bases: {},            // truecolour only: Blue Marble tiles by "tx_ty"
+      waiting: [],          // truecolour tiles whose base tile is not here yet
+      raw: null, rawCtx: null,          // truecolour only: unhealed mosaic
+      mask: null,                       // truecolour only: 1 = gap pixel
+      bmMos: null, bmMosCtx: null,      // truecolour only: base-map mosaic
     };
     cache.ctx.fillStyle = "#d7e3ea";
     cache.ctx.fillRect(0, 0, MW, MW);
 
-    const finish = () => { if (cache.pending === 0) globeFinishTexture(layer); };
-    const addTile = (srcLayer, tx, ty, isBase) => {
-      cache.pending++;
+    /* today's true-colour imagery has black polar-night / swath holes
+       INSIDE tiles, so tiles are healed per-pixel from the static Blue
+       Marble base (data layers just skip empty tiles and get the
+       Natural Earth outlines where tiles never arrive) */
+    const withBase = layer === "truecolor";
+    let rawCtx = null, bmMosCtx = null;
+    if (withBase) {
+      const raw = document.createElement("canvas");
+      raw.width = raw.height = MW;
+      cache.raw = raw;
+      cache.rawCtx = rawCtx = raw.getContext("2d", { willReadFrequently: true });
+      cache.mask = new Uint8Array(MW * MW);
+      const bmMos = document.createElement("canvas");
+      bmMos.width = bmMos.height = MW;
+      cache.bmMos = bmMos;
+      cache.bmMosCtx = bmMosCtx = bmMos.getContext("2d");
+    }
+    const baseReady = (tx, ty) => {
+      const b = cache.bases[tx + "_" + ty];
+      return b && b.naturalWidth;
+    };
+    const drawHealed = (tx, ty, img) => {
+      const m = gapMaskOf(img);
+      rawCtx.drawImage(img, tx * T, ty * T);
+      blitMask(cache.mask, m, tx * T, ty * T, MW);
+      cache.ctx.drawImage(healTile(img, cache.bases[tx + "_" + ty], m),
+                          tx * T, ty * T);
+      globeScheduleReproject(layer);
+    };
+    const flushWaiting = (tx, ty) => {
+      cache.waiting = cache.waiting.filter(([wx, wy, img]) => {
+        if (wx === tx && wy === ty && baseReady(tx, ty)) {
+          drawHealed(wx, wy, img);
+          return false;
+        }
+        return true;
+      });
+    };
+    const addBase = (tx, ty) => {
       const img = new Image();
       img.onload = () => {
-        if (!isBase && !tileHasContent(img)) cache.failed.push([tx, ty]);
-        else cache.ctx.drawImage(img, tx * T, ty * T);
-        if (--cache.pending === 0) finish();
-        else globeScheduleReproject(layer);
+        cache.bases[tx + "_" + ty] = img;
+        if (bmMosCtx) bmMosCtx.drawImage(img, tx * T, ty * T);
+        /* a layer tile that never arrived -> show the base map there */
+        if (cache.failed.some(([fx, fy]) => fx === tx && fy === ty)) {
+          cache.ctx.drawImage(img, tx * T, ty * T);
+          if (rawCtx) rawCtx.drawImage(img, tx * T, ty * T);
+          globeScheduleReproject(layer);
+        }
+        flushWaiting(tx, ty);
+        if (--cache.pending === 0) globeFinishTexture(layer);
       };
       img.onerror = () => {
-        if (!isBase) cache.failed.push([tx, ty]);
-        if (--cache.pending === 0) finish();
+        if (--cache.pending === 0) globeFinishTexture(layer);
       };
-      img.src = `/api/maptile/${srcLayer}/${Z}/${tx}/${ty}.${TILE_SRC[srcLayer].ext}`;
+      img.src = `/api/maptile/bluemarble/${Z}/${tx}/${ty}.jpg`;
     };
-    /* today's true-colour imagery has black polar-night / swath holes;
-       the static Blue Marble underneath fills them (truecolour only) */
-    const withBase = layer === "truecolor";
+    const addTile = (tx, ty) => {
+      const img = new Image();
+      img.onload = () => {
+        if (withBase) {
+          if (baseReady(tx, ty)) drawHealed(tx, ty, img);
+          else cache.waiting.push([tx, ty, img]);
+        } else if (tileHasContent(img)) {
+          cache.ctx.drawImage(img, tx * T, ty * T);
+          globeScheduleReproject(layer);
+        } else {
+          cache.failed.push([tx, ty]);
+        }
+        if (--cache.pending === 0) globeFinishTexture(layer);
+      };
+      img.onerror = () => {
+        cache.failed.push([tx, ty]);
+        const b = withBase && cache.bases[tx + "_" + ty];
+        if (b) {
+          cache.ctx.drawImage(b, tx * T, ty * T);
+          if (rawCtx) {
+            rawCtx.drawImage(b, tx * T, ty * T);
+            bmMosCtx.drawImage(b, tx * T, ty * T);
+          }
+          globeScheduleReproject(layer);
+        }
+        if (--cache.pending === 0) globeFinishTexture(layer);
+      };
+      img.src = `/api/maptile/${layer}/${Z}/${tx}/${ty}.${TILE_SRC[layer].ext}`;
+    };
     if (withBase)
-      for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++)
-        addTile("bluemarble", tx, ty, true);
-    for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++)
-      addTile(layer, tx, ty, false);
+      for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++) {
+        cache.pending++; addBase(tx, ty);
+      }
+    for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++) {
+      cache.pending++; addTile(tx, ty);
+    }
     setTimeout(() => { if (!cache.done) globeFinishTexture(layer); }, 30000);
   }
   if (cache.done) globeUploadTexture(layer);
+}
+
+/* the gap rule, shared by the per-tile and whole-mosaic healing passes:
+   gap pixels are DARK and GREY (R=G=B, no chroma; dark ocean is
+   blue-tinted, so a darkness+greyness test leaves water alone) */
+function gapMaskOf(img) {
+  const S = 256;
+  const cc = document.createElement("canvas");
+  cc.width = cc.height = S;
+  const x = cc.getContext("2d", { willReadFrequently: true });
+  x.drawImage(img, 0, 0, S, S);
+  const d = x.getImageData(0, 0, S, S).data;
+  const m = new Uint8Array(S * S);
+  for (let q = 0; q < m.length; q++) {
+    const i = q * 4;
+    const r = d[i], g = d[i + 1], b = d[i + 2];
+    const sum = r + g + b;
+    m[q] = (sum < 36 || (sum < 90 && (Math.max(r, g, b) - Math.min(r, g, b)) < 12)) ? 1 : 0;
+  }
+  return m;
+}
+
+/* copy a 256x256 tile mask into the 2048x2048 mosaic mask */
+function blitMask(dst, tile, ox, oy, mw) {
+  for (let y = 0; y < 256; y++)
+    dst.set(tile.subarray(y << 8, (y << 8) + 256), ox + (oy + y) * mw);
+}
+
+/* heal one true-colour tile for the progressive display: each gap run is
+   filled by interpolating between the nearest real satellite pixels on
+   its left and right in the same row -- the gaps are diagonal swath
+   edges, so a horizontal blend disappears into the surrounding imagery.
+   Runs wider than MAXRUN are true polar night, not a swath slash: they
+   get the Blue Marble base instead of a smeared lerp. (MAXRUN itself is
+   declared just above healMosaic, which uses the same constant.) */
+function healTile(img, base, preMask) {
+  const S = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = S;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  x.drawImage(img, 0, 0, S, S);
+  const b = document.createElement("canvas");
+  b.width = b.height = S;
+  const bx = b.getContext("2d", { willReadFrequently: true });
+  bx.drawImage(base, 0, 0, S, S);
+  const d = x.getImageData(0, 0, S, S);
+  const p = d.data;
+  const bd = bx.getImageData(0, 0, S, S).data;
+  const gap = preMask || gapMaskOf(img);
+  for (let y = 0; y < S; y++) {
+    const row = y * S;
+    for (let t = row; t < row + S; t++) {
+      if (!gap[t]) continue;
+      let e = t;
+      while (e < row + S && gap[e]) e++;
+      const wide = e - t > MAXRUN;                   // polar night, not a slash
+      const hasL = t > row, hasR = e < row + S;
+      for (let u = t; u < e; u++) {
+        const i = u * 4;
+        if (!wide && hasL && hasR) {
+          const a = (u - t + 1) / (e - t + 1);      // 0 at left edge
+          const iL = (t - 1) * 4, iR = e * 4;
+          for (let k = 0; k < 3; k++)
+            p[i + k] = Math.round(p[iL + k] * (1 - a) + p[iR + k] * a);
+        } else if (!wide) {
+          const src = hasL ? (t - 1) * 4 : (hasR ? e * 4 : -1);
+          if (src >= 0) {
+            p[i] = p[src]; p[i + 1] = p[src + 1]; p[i + 2] = p[src + 2];
+          } else {                                   // whole row is gap
+            p[i] = bd[i]; p[i + 1] = bd[i + 1]; p[i + 2] = bd[i + 2];
+          }
+        } else {                                     // wide run -> base map
+          p[i] = bd[i]; p[i + 1] = bd[i + 1]; p[i + 2] = bd[i + 2];
+        }
+        p[i + 3] = 255;
+      }
+      t = e - 1;                                     // skip the filled run
+    }
+  }
+  x.putImageData(d, 0, 0);
+  return c;
+}
+
+/* final seam-free healing pass over the whole mosaic: the per-tile pass
+   cannot connect gap runs that continue into the neighbouring tile,
+   which leaves streaks at tile seams; once every tile is in, this pass
+   re-heals from the raw mosaic with a whole-world view.
+   Narrow runs (up to MAXRUN): horizontal lerp between the nearest real
+   pixels -- across a diagonal swath band that crossing is short.
+   Wide runs (polar night, broad swath wedges): the Blue Marble base
+   rescaled per row so its terrain texture keeps detail but its
+   brightness matches the imagery flanking the gap.
+   The mask is first dilated so JPEG halo greys around every gap are
+   refilled too, and the filled region is then softened with a local
+   average, which removes the comb banding that straight ramps produce
+   against grainy satellite imagery. */
+const MAXRUN = 32;
+
+/* grow a 1-bit mask by r pixels horizontally then vertically */
+function dilateMask(src, W, r) {
+  const tmp = new Uint8Array(W * W), out = new Uint8Array(W * W);
+  for (let y = 0; y < W; y++) {
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      if (!src[row + x]) continue;
+      const a = Math.max(0, x - r), b = Math.min(W - 1, x + r);
+      for (let u = a; u <= b; u++) tmp[row + u] = 1;
+    }
+  }
+  for (let y = 0; y < W; y++) {
+    const row = y * W;
+    for (let x = 0; x < W; x++) {
+      if (!tmp[row + x]) continue;
+      const a = Math.max(0, y - r), b = Math.min(W - 1, y + r);
+      for (let v = a; v <= b; v++) out[v * W + x] = 1;
+    }
+  }
+  return out;
+}
+
+function healMosaic(c) {
+  const MW = c.merc.width;
+  const mask = dilateMask(c.mask, MW, 2);
+  const raw = c.rawCtx.getImageData(0, 0, MW, MW);
+  const p = raw.data;
+  const bm = c.bmMosCtx.getImageData(0, 0, MW, MW).data;
+  for (let y = 0; y < MW; y++) {
+    const row = y * MW;
+    for (let t = row; t < row + MW; t++) {
+      if (!mask[t]) continue;
+      let e = t;
+      while (e < row + MW && mask[e]) e++;
+      const w = e - t;
+      const iL = (t - 1) * 4, iR = e * 4;
+      const hasL = t > row, hasR = e < row + MW;
+      if (w > MAXRUN) {
+        /* wide run: Blue Marble, gain-matched to the flanking imagery.
+           The target is the mean of several pixels on each side -- a
+           single flanking pixel carries JPEG halo noise, which striped
+           the fill. */
+        let gain = null;
+        if (hasL || hasR) {
+          const tgt = [0, 0, 0], ref = [0, 0, 0];
+          let nt = 0;
+          if (hasL && hasR) {
+            for (let s = 1; s <= 8; s++) {
+              const a = (t - 1 - s) * 4, b = (e + s) * 4;
+              if (t - 1 - s < row || e + s >= row + MW) break;
+              for (let k = 0; k < 3; k++) tgt[k] += p[a + k] + p[b + k];
+              nt += 2;
+            }
+          } else {
+            const side = hasL ? -1 : 1;
+            for (let s = 1; s <= 8; s++) {
+              const q = hasL ? t - 1 - s : e + s;
+              if (q < row || q >= row + MW) break;
+              for (let k = 0; k < 3; k++) tgt[k] += p[q * 4 + k];
+              nt++;
+            }
+          }
+          if (nt) {
+            for (let k = 0; k < 3; k++) tgt[k] /= nt;
+            for (let u = t; u < e; u++)
+              for (let k = 0; k < 3; k++) ref[k] += bm[u * 4 + k];
+            gain = [0, 0, 0];
+            for (let k = 0; k < 3; k++)
+              gain[k] = Math.max(0.4, Math.min(2.5,
+                tgt[k] / Math.max(8, ref[k] / w)));
+          }
+        }
+        for (let u = t; u < e; u++) {
+          const i = u * 4;
+          for (let k = 0; k < 3; k++)
+            p[i + k] = gain ? Math.min(255, Math.round(bm[i + k] * gain[k]))
+                            : bm[i + k];
+          p[i + 3] = 255;
+        }
+      } else if (hasL && hasR) {
+        /* narrow run: horizontal lerp across the gap */
+        for (let u = t; u < e; u++) {
+          const i = u * 4;
+          const a = (u - t + 1) / w;           // 0 at left edge
+          for (let k = 0; k < 3; k++)
+            p[i + k] = Math.round(p[iL + k] * (1 - a) + p[iR + k] * a);
+          p[i + 3] = 255;
+        }
+      } else {
+        /* narrow run touching the row edge: copy the one valid side */
+        const src = hasL ? iL : (hasR ? iR : -1);
+        for (let u = t; u < e; u++) {
+          const i = u * 4;
+          if (src >= 0) {
+            p[i] = p[src]; p[i + 1] = p[src + 1]; p[i + 2] = p[src + 2];
+          } else {
+            p[i] = bm[i]; p[i + 1] = bm[i + 1]; p[i + 2] = bm[i + 2];
+          }
+          p[i + 3] = 255;
+        }
+      }
+      t = e - 1;
+    }
+  }
+  /* soften the filled region: a local average blends each synthetic
+     pixel with its neighbourhood, which removes the comb banding that
+     straight ramps produce against grainy satellite imagery */
+  const hp = new Uint8ClampedArray(p);
+  for (let y = 0; y < MW; y++) {
+    const row = y * MW;
+    for (let x = 0; x < MW; x++) {
+      const q = row + x;
+      if (!mask[q]) continue;
+      let s0 = 0, s1 = 0, s2 = 0, n = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= MW) continue;
+        const yrow = yy * MW + x;
+        for (let dx = -2; dx <= 2; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= MW) continue;
+          const i = (yrow + dx) * 4;
+          s0 += hp[i]; s1 += hp[i + 1]; s2 += hp[i + 2]; n++;
+        }
+      }
+      const i = q * 4;
+      p[i] = Math.round(hp[i] * 0.5 + s0 / n * 0.5);
+      p[i + 1] = Math.round(hp[i + 1] * 0.5 + s1 / n * 0.5);
+      p[i + 2] = Math.round(hp[i + 2] * 0.5 + s2 / n * 0.5);
+    }
+  }
+  c.rawCtx.putImageData(raw, 0, 0);
+  c.ctx.drawImage(c.raw, 0, 0);
 }
 
 function globeScheduleReproject(layer) {
@@ -245,6 +553,7 @@ function globeFinishTexture(layer) {
   const c = GLOBE._texCache[layer];
   if (c.done) return;
   c.done = true;
+  if (layer === "truecolor" && c.raw) healMosaic(c);   // seam-free final heal
   globeDrawLandFallback(layer);
   globeReproject(layer);
 }
@@ -271,7 +580,7 @@ function globeDrawLandFallback(layer) {
   const c = GLOBE._texCache[layer];
   const failed = c.failed || [];
   if (!failed.length || layer === "truecolor") return;
-  if (!failed.length) return;
+  if (!GLOBE._land) return;          // world.json not loaded (yet)
   const paint = (ctx) => {
     ctx.fillStyle = "#dbe7cf";
     ctx.strokeStyle = "#9db48f";
@@ -335,7 +644,8 @@ function globeSize() {
     cv.style.width = w + "px"; cv.style.height = h + "px";
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
   }
-  c.style.borderRadius = "50%";
+  /* the sphere is drawn onto transparency, so no CSS clipping is needed
+     (border-radius would cut the rim when the globe is framed large) */
   if (GLOBE._gl) GLOBE._gl.viewport(0, 0, c.width, c.height);
   GLOBE._dpr = dpr; GLOBE._W = w; GLOBE._H = h;
   drawSpace();
@@ -367,7 +677,7 @@ function globeBindEvents(canvas) {
     if (pts.size === 2 && pinchD0) {
       const [a, b] = [...pts.values()];
       const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
-      GLOBE.dist = Math.max(1.55, Math.min(5.5, dist0 * pinchD0 / d));
+      GLOBE.dist = Math.max(2.4, Math.min(6, dist0 * pinchD0 / d));
       drawSpace(); return;
     }
     if (!last) return;
@@ -396,7 +706,7 @@ function globeBindEvents(canvas) {
   canvas.addEventListener("pointercancel", up);
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
-    GLOBE.dist = Math.max(1.55, Math.min(5.5,
+    GLOBE.dist = Math.max(2.4, Math.min(6,
       GLOBE.dist * Math.exp(e.deltaY * 0.0011)));
     touch(); drawSpace();
   }, { passive: false });
@@ -404,9 +714,9 @@ function globeBindEvents(canvas) {
   const zi = document.getElementById("zoomIn"),
         zo = document.getElementById("zoomOut");
   if (zi) zi.addEventListener("click", () =>
-    { GLOBE.dist = Math.max(1.55, GLOBE.dist * 0.78); drawSpace(); });
+    { GLOBE.dist = Math.max(2.4, GLOBE.dist * 0.78); drawSpace(); });
   if (zo) zo.addEventListener("click", () =>
-    { GLOBE.dist = Math.min(5.5, GLOBE.dist / 0.78); drawSpace(); });
+    { GLOBE.dist = Math.min(6, GLOBE.dist / 0.78); drawSpace(); });
 }
 
 function prefersReducedMotion() {
@@ -453,10 +763,10 @@ GLOBE.open = function () {
   const lon = parseFloat(document.getElementById("lon").value);
   if (!isNaN(lat) && !isNaN(lon)) {
     GLOBE.pin = { lat, lon };
-    GLOBE.yaw = -lon * RAD; GLOBE.pitch = lat * RAD; GLOBE.dist = 2.6;
+    GLOBE.yaw = -lon * RAD; GLOBE.pitch = lat * RAD; GLOBE.dist = 3.4;
   } else {
     GLOBE.pin = null;
-    if (!GLOBE._openedOnce) { GLOBE.yaw = 20 * RAD; GLOBE.pitch = 22 * RAD; GLOBE.dist = 3.1; }
+    if (!GLOBE._openedOnce) { GLOBE.yaw = 20 * RAD; GLOBE.pitch = 22 * RAD; GLOBE.dist = 3.6; }
   }
   GLOBE._openedOnce = true;
   globeSize();
@@ -566,6 +876,15 @@ function globeProject(p, M, D) {
            z: w[2], facing: w[2] > 1 / D };
 }
 
+/* same projection for objects already in world space (the satellite) */
+function globeProjectWorld(p, D) {
+  const zc = D - p[2];
+  if (zc <= 0) return null;
+  const f = 1 / Math.tan(FOV / 2);
+  const nx = p[0] * f / zc, ny = p[1] * f / zc;
+  return { x: (nx + 1) / 2 * GLOBE._W, y: (1 - ny) / 2 * GLOBE._H, z: p[2] };
+}
+
 function globeDrawOverlay(now, M, D) {
   const ctx = GLOBE._overlayCtx;
   if (!ctx) return;
@@ -574,13 +893,15 @@ function globeDrawOverlay(now, M, D) {
   ctx.clearRect(0, 0, GLOBE._W, GLOBE._H);
   const dark = isDarkTheme();
 
-  /* satellite in orbit (a small NASA touch) */
+  /* satellite in orbit (a small NASA touch) -- projected in WORLD space
+     so it circles the planet independently of the globe's spin, and the
+     occlusion test below uses the same world coordinates */
   if (!prefersReducedMotion()) {
     const a = now * 0.00045;
     const r = 1.42, inc = 0.45;
     const sat = [r * Math.cos(a), r * Math.sin(a) * Math.sin(inc),
                  r * Math.sin(a) * Math.cos(inc)];
-    const pr = globeProject(sat, M, D);
+    const pr = globeProjectWorld(sat, D);
     if (pr && pr.z > -D) {
       /* occlusion: does the camera ray to the satellite pass the globe? */
       const O = [0, 0, D];

@@ -180,6 +180,23 @@ def lan_ip() -> str:
         return "127.0.0.1"
 
 
+def warm_mosaic() -> None:
+    """Pre-fetch the z3 world mosaic (8x8 = 64 tiles per layer) that the
+    3D globe needs for its texture, once per imagery day. Doing it here
+    means the first farmer who opens the picker never waits for ~128
+    tile downloads; the hub absorbs them in the background instead."""
+    for layer in ("truecolor", "bluemarble"):
+        hint = "static" if LAYERS[layer].get("static") else _hint(layer)
+        if not hint:
+            continue
+        for y in range(8):
+            for x in range(8):
+                try:
+                    get_tile(layer, 3, x, y)
+                except Exception:        # single-tile failure is fine
+                    pass
+
+
 def _background_refresher() -> None:
     """Every hour, re-pull NASA POWER data for every cached location whose
     copy is older than 24 h. Keeps the hub's local copy of the satellite
@@ -187,9 +204,17 @@ def _background_refresher() -> None:
     farmer interaction; failures are logged and retried next hour."""
     import datetime as _dt
     import time
+    _mosaic_day = None                  # date whose mosaic was last warmed
     while True:
         try:
             gibs.warm_hints()               # keep imagery dates fresh
+            # warm the globe's imagery mosaic once per day (and right at
+            # startup, so the picker is ready on first use)
+            today = _dt.date.today()
+            if _mosaic_day != today:
+                _mosaic_day = today
+                print("[hub] warming the daily globe imagery mosaic")
+                gibs.warm_mosaic()
             now = _dt.datetime.now()
             for entry in storage.status():
                 if entry["dataset"] != "power_daily":
