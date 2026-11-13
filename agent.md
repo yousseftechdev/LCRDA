@@ -707,3 +707,76 @@ pipeline was the second bug**: it ran on every texture finish and could striping
 * Suggested additions (not implemented): NVDI/soil-moisture legends on the
   globe, tap-to-search city (geocode offline), day/night terminator toggle,
   crop-calendar overlay, WebGL globe idle "tour" of the user's saved fields.
+
+---
+
+## 10. SESSION LOG — globe still glitching: renderer replaced (2026-11-13, cont.)
+
+**Prompt 5 (verbatim):**
+> "you still didn't fix it so i need you to use another provider such as cesium
+> ion and also i need you to utilize these resources provided by nasa for our
+> challenge https://www.spaceappschallenge.org/2026/challenges/adapting-farms-with-nasa-data/?tab=resources"
+
+### 10.1 What the Blue Marble switch did NOT fix — root cause #2 (the renderer)
+The imagery was correct (dumping the assembled equirectangular canvas showed a
+perfect Blue Marble: tan Sahara, correct continents). The **hand-rolled WebGL
+sphere** was the remaining bug: the uploaded canvas texture was sampled
+vertically mirrored/offset (the Sahara sampled ocean; Antarctica's smear rows
+appeared near the equator), so the globe looked "wobbling with holes" even
+with perfect tiles. Additional weaknesses found:
+* `#globeCanvas` was measured while the panel was `display:none`, so the
+  backing store could stay 320 px and be CSS-stretched to ~560 px (blurry,
+  wobbling, tap mapping off).
+* `precision mediump float` UVs + `CLAMP_TO_EDGE` at the antimeridian gave a
+  seam/smear on the rotating sphere.
+
+**Fix: stop hand-rolling WebGL.**
+* Vendored **three.js r149** at `frontend/vendor/three.min.js` (608 KB, MIT,
+  local file — still no CDN, still works offline on the Pi).
+* `globe.js` now builds a `THREE.SphereGeometry(1, 128, 96, -π/2)` +
+  `MeshBasicMaterial` (photographic texture is not darkened by lighting),
+  an additive Fresnel **atmosphere shell**, and uses `CanvasTexture` with
+  `RepeatWrapping` (seam-free) + mipmaps + anisotropy.
+* `ResizeObserver` on the map wrapper fixes the stale 320 px canvas.
+* Same public API kept: `GLOBE.init/open/stop/setLayer/setPin`, yaw/pitch/dist
+  controls, label/pin/satellite 2D overlay, ray-sphere tap pick
+  (`sphere.rotation.set(pitch, yaw, 0)` ≡ `Rx(pitch)·Ry(yaw)`, verified).
+* Deleted the dead custom shaders/mat4 helpers (~120 lines). `globe.js` is now
+  ~679 lines; `node --check` clean.
+
+### 10.2 Why NOT Cesium Ion (decision recorded)
+Cesium Ion was the user's suggestion, but it needs an **access token** and
+streams imagery from `api.cesium.com`; CesiumJS itself is a multi-MB library
+with web workers/assets. That breaks the two hard project constraints:
+**offline-first on a Raspberry Pi** and **no external CDNs at runtime**.
+NASA GIBS Blue Marble is already the best complete, token-free imagery for
+this use case, so the globe keeps GIBS. If the team later wants Ion:
+add `CESIUM_ION_TOKEN` server-side and proxy `api.cesium.com` tiles through
+`/api/maptile/...` — the frontend only consumes the local proxy, so no other
+change is needed. Recorded as a future option, not implemented.
+
+### 10.3 NASA challenge resources now surfaced in the product
+The challenge page's resource stack matches what the hub already uses; the
+"Where this advice comes from" panel now names and links the **missions**:
+SMAP (root-zone soil moisture), MODIS Terra (LST + true colour), VIIRS (NDVI),
+GPM IMERG (rainfall), NASA POWER (weather/climate), NASA GIBS/Worldview
+(tiles), Blue Marble Next Generation (globe base), plus the 2026
+"Field Shift: Adapting Farms with NASA Data" challenge link. SoilGrids
+(ISRIC) and FAO EcoCrop/FAO-56/AquaCrop remain the non-NASA inputs.
+
+### 10.4 Verification actually run
+* `node --check globe.js` OK; 35/35 tests pass; `/health` 200.
+* three.js globe in headless Chromium + SwiftShader at 800×900:
+  * light: Africa centred, Sahara tan, labels aligned, atmosphere rim;
+  * dark + Soil moisture: data overlay composites correctly, stars/satellite;
+  * `--disable-3d-apis`: `GLOBE.init` throws, app falls back to the flat map
+    (hint text + visible `mapCanvas` confirmed).
+* Debug harnesses (`_*.html`, `_patch.js`) deleted.
+
+### 10.5 Notes for next agent
+* three.js is loaded **before** `globe.js` in `index.html`; keep that order.
+* `globeSize()` is idempotent and now ResizeObserver-driven — do not set
+  `canvas.width` manually anywhere.
+* `globeUploadTexture()` only marks `texture.needsUpdate`; the material map is
+  swapped when the visible layer matches.
+* If a future browser lacks WebGL, the flat map path is untouched.

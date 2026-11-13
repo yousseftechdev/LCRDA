@@ -140,10 +140,19 @@
         <li><b>Weather:</b> daily satellite records for your exact spot from
         NASA POWER (temperature, rain, sun, wind, humidity), updated every day
         and stored on this device — the advice works with no internet.</li>
-        <li><b>Map:</b> daily NASA satellite imagery via NASA GIBS /
-        Worldview (MODIS, SMAP, VIIRS, IMERG), fetched once a day and
-        stored on this hub; world outlines from Natural Earth (public
-        domain) as the offline fallback.</li>
+        <li><b>Map:</b> daily NASA satellite imagery via
+        <a href="https://gibs.earthdata.nasa.gov/" target="_blank" rel="noopener">NASA GIBS / Worldview</a>
+        (MODIS, SMAP, VIIRS, IMERG), fetched once a day and stored on this
+        hub. The 3D globe uses
+        <a href="https://visibleearth.nasa.gov/collection/1484/blue-marble" target="_blank" rel="noopener">NASA Blue Marble Next Generation</a>
+        as its always-complete base map; world outlines come from Natural
+        Earth (public domain) as the offline fallback.</li>
+        <li><b>NASA missions behind the numbers:</b> SMAP (root-zone soil
+        moisture), MODIS Terra (land-surface temperature, true-colour),
+        VIIRS (NDVI greenery), GPM IMERG (rainfall rate), and POWER
+        (weather and climate records) — the Earth-observation stack used by
+        the
+        <a href="https://www.spaceappschallenge.org/2026/challenges/adapting-farms-with-nasa-data/" target="_blank" rel="noopener">2026 NASA Space Apps “Field Shift” challenge</a>.</li>
         <li><b>Soil:</b> the SoilGrids world soil map (acidity, sand, clay)
         for your spot.</li>
         <li><b>Crop science:</b> what each crop needs to grow, from the FAO
@@ -171,6 +180,7 @@
 </footer>
 
 <script src="map.js"></script>
+<script src="vendor/three.min.js"></script>
 <script src="globe.js"></script>
 <script src="app.js"></script>
 </body>

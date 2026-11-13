@@ -48,107 +48,50 @@ function llToVec(lat, lon) {
 }
 
 /* ---------- WebGL setup ---------- */
-const VSH = `
-attribute vec3 aPos; attribute vec2 aUV;
-uniform mat4 uMVP; uniform mat4 uModel;
-varying vec2 vUV; varying vec3 vN; varying vec3 vW;
-void main() {
-  vUV = aUV;
-  vec4 w = uModel * vec4(aPos, 1.0);
-  vW = w.xyz;
-  vN = normalize((uModel * vec4(aPos, 0.0)).xyz);
-  gl_Position = uMVP * vec4(aPos, 1.0);
-}`;
-const FSH = `
-precision mediump float;
-varying vec2 vUV; varying vec3 vN; varying vec3 vW;
-uniform sampler2D uTex;
-uniform vec3 uLightDir; uniform vec3 uEye; uniform vec3 uRim;
-void main() {
-  vec3 n = normalize(vN);
-  vec3 v = normalize(uEye - vW);
-  vec3 base = texture2D(uTex, vUV).rgb;
-  float diff = max(dot(n, uLightDir), 0.0);
-  vec3 col = base * (0.34 + 0.82 * diff);
-  col = max(col, base * 0.16);            /* never fully black at night */
-  float fres = pow(1.0 - max(dot(n, v), 0.0), 2.6);
-  col += uRim * fres * 0.85;              /* atmosphere rim */
-  gl_FragColor = vec4(col, 1.0);
-}`;
-
-function perspective(out, fovy, aspect, near, far) {
-  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
-  out[0] = f / aspect; out[5] = f; out[10] = (far + near) * nf; out[11] = -1;
-  out[14] = 2 * far * near * nf; out[1] = out[2] = out[3] = out[4] =
-  out[6] = out[7] = out[8] = out[9] = out[12] = out[13] = out[15] = 0;
-  return out;
-}
-
 GLOBE.init = function () {
   const canvas = document.getElementById("globeCanvas");
-  if (!canvas) return false;
-  const gl = canvas.getContext("webgl", { alpha: true, antialias: true,
-                                          premultipliedAlpha: true })
-          || canvas.getContext("experimental-webgl");
-  if (!gl) return false;
+  if (!canvas || typeof THREE === "undefined") return false;
 
-  const compile = (type, src) => {
-    const s = gl.createShader(type);
-    gl.shaderSource(s, src); gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-      throw new Error(gl.getShaderInfoLog(s));
-    return s;
-  };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VSH));
-  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FSH));
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
-    throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
+  /* three.js (vendored locally, no CDN) -- mature sphere/UV/texture code
+     instead of hand-rolled WebGL, which is where the wobbles came from */
+  const renderer = new THREE.WebGLRenderer({
+    canvas, alpha: true, antialias: true, powerPreference: "high-performance",
+  });
+  renderer.setClearColor(0x000000, 0);
+  if ("outputEncoding" in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
 
-  /* sphere geometry */
-  const BANDS = 48, SEGS = 72, pos = [], uv = [], idx = [];
-  for (let i = 0; i <= BANDS; i++) {
-    const v = i / BANDS, lat = 90 - v * 180;
-    for (let j = 0; j <= SEGS; j++) {
-      const u = j / SEGS, lon = -180 + u * 360;
-      const p = llToVec(lat, lon);
-      pos.push(p[0], p[1], p[2]); uv.push(u, v);
-    }
-  }
-  for (let i = 0; i < BANDS; i++) for (let j = 0; j < SEGS; j++) {
-    const a = i * (SEGS + 1) + j, b = a + SEGS + 1;
-    idx.push(a, b, a + 1, a + 1, b, b + 1);
-  }
-  GLOBE._count = idx.length;
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.STATIC_DRAW);
-  const aPos = gl.getAttribLocation(prog, "aPos");
-  gl.enableVertexAttribArray(aPos);
-  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 12, 0);
-  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uv), gl.STATIC_DRAW);
-  const aUV = gl.getAttribLocation(prog, "aUV");
-  gl.enableVertexAttribArray(aUV);
-  gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, 8, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 20);
+  camera.position.set(0, 0, GLOBE.dist);
 
-  GLOBE._gl = gl; GLOBE._prog = prog;
-  GLOBE._u = {};
-  for (const n of ["uMVP", "uModel", "uTex", "uLightDir", "uEye", "uRim"])
-    GLOBE._u[n] = gl.getUniformLocation(prog, n);
+  /* Blue Marble is photographic, so keep the surface unlit and bright;
+     the 3D read comes from the atmosphere shell and the space backdrop */
+  const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 128, 96, -Math.PI / 2), material);
+  sphere.rotation.order = "XYZ";
+  scene.add(sphere);
 
-  /* 1x1 stand-in texture until imagery arrives */
-  GLOBE._tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, GLOBE._tex);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA,
-                gl.UNSIGNED_BYTE, new Uint8Array([214, 227, 234, 255]));
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  const atmo = new THREE.Mesh(
+    new THREE.SphereGeometry(1.045, 96, 64),
+    new THREE.ShaderMaterial({
+      transparent: true, side: THREE.BackSide, depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      uniforms: { uColor: { value: new THREE.Color(0x5aa0ee) } },
+      vertexShader:
+        "varying vec3 vN; varying vec3 vW;" +
+        "void main(){ vN = normalize(normalMatrix * normal);" +
+        " vec4 w = modelViewMatrix * vec4(position, 1.0); vW = w.xyz;" +
+        " gl_Position = projectionMatrix * w; }",
+      fragmentShader:
+        "varying vec3 vN; varying vec3 vW; uniform vec3 uColor;" +
+        "void main(){ float f = pow(1.0 - abs(dot(normalize(vN)," +
+        " normalize(-vW))), 2.4); gl_FragColor = vec4(uColor, f * 0.9); }",
+    }));
+  scene.add(atmo);
+
+  GLOBE._renderer = renderer; GLOBE._scene = scene; GLOBE._camera = camera;
+  GLOBE._sphere = sphere; GLOBE._mat = material;
 
   GLOBE._space = document.getElementById("spaceCanvas");
   GLOBE._overlay = document.getElementById("globeOverlay");
@@ -162,6 +105,13 @@ GLOBE.init = function () {
       .addEventListener("change", () => {
         if (!localStorage.getItem("lcrda-theme")) drawSpace();
       });
+  /* the panel is display:none at boot, so its measured width can be a
+     stale 320px -- re-measure whenever the wrapper actually changes size
+     (a stretched canvas was itself a source of blur/wobble) */
+  if (window.ResizeObserver) {
+    GLOBE._ro = new ResizeObserver(() => globeSize());
+    GLOBE._ro.observe(canvas.parentElement);
+  }
   globeSize();
   GLOBE.supported = true;       // only claim support once everything above held
   /* imagery is NOT warmed here: 128 tile requests at page load would
@@ -318,16 +268,28 @@ function globeDrawLandFallback(layer) {
 }
 
 function globeUploadTexture(layer) {
-  const gl = GLOBE._gl, c = GLOBE._texCache[layer];
-  if (!gl || !c) return;
+  const c = GLOBE._texCache[layer];
+  if (!c || !GLOBE._renderer) return;
   const now = performance.now();
   if (c.uploaded && now - c.uploaded < 700 && !c.done) return; // throttle
   c.uploaded = now;
-  gl.bindTexture(gl.TEXTURE_2D, GLOBE._tex);
-  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c.eq);
-  gl.generateMipmap(gl.TEXTURE_2D);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  if (!c.tex) {
+    const t = new THREE.CanvasTexture(c.eq);
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.wrapS = THREE.RepeatWrapping;      // no seam at the antimeridian
+    t.wrapT = THREE.ClampToEdgeWrapping;
+    t.anisotropy = GLOBE._renderer.capabilities.getMaxAnisotropy();
+    if ("encoding" in t) t.encoding = THREE.sRGBEncoding;   // r149 API
+    if ("colorSpace" in t && THREE.SRGBColorSpace) t.colorSpace = THREE.SRGBColorSpace;
+    c.tex = t;
+  }
+  c.tex.needsUpdate = true;
+  if (GLOBE.layer === layer) {
+    GLOBE._mat.map = c.tex;
+    GLOBE._mat.needsUpdate = true;
+  }
 }
 
 /* land outlines for the offline fallback (shared with map.js) */
@@ -343,21 +305,27 @@ function globeLand() {
 function globeSize() {
   const c = document.getElementById("globeCanvas");
   if (!c) return;
-  const wrap = c.parentElement, dpr = window.devicePixelRatio || 1;
-  const w = wrap.clientWidth || 320, h = w;          // square
-  for (const cv of [c, GLOBE._space, GLOBE._overlay]) {
+  const wrap = c.parentElement;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.max(220, wrap.clientWidth || 320), h = w;
+  GLOBE._W = w; GLOBE._H = h; GLOBE._dpr = dpr;
+  c.style.width = w + "px"; c.style.height = h + "px";
+  for (const cv of [GLOBE._space, GLOBE._overlay]) {
     if (!cv) continue;
     cv.style.width = w + "px"; cv.style.height = h + "px";
     cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
   }
-  /* the sphere is drawn onto transparency, so no CSS clipping is needed
-     (border-radius would cut the rim when the globe is framed large) */
-  if (GLOBE._gl) GLOBE._gl.viewport(0, 0, c.width, c.height);
-  GLOBE._dpr = dpr; GLOBE._W = w; GLOBE._H = h;
-  drawSpace();
+  if (GLOBE._renderer) {
+    GLOBE._renderer.setPixelRatio(dpr);
+    GLOBE._renderer.setSize(w, h, false);
+    GLOBE._camera.aspect = 1;
+    GLOBE._camera.updateProjectionMatrix();
+  }
 }
 
-/* ---------- events ---------- */
+/* the sphere is drawn onto transparency, so no CSS clipping is needed
+   (border-radius would cut the rim when the globe is framed large) */
+
 function globeBindEvents(canvas) {
   const pts = new Map();
   let last = null, moved = 0, pinchD0 = 0, dist0 = 0, vyaw = 0, vpitch = 0;
@@ -543,31 +511,11 @@ function globeRun() {
 }
 
 function globeDraw(now) {
-  const gl = GLOBE._gl;
-  if (!gl) return;
-  const D = GLOBE.dist, M = modelMat();
-  const P = perspective([], FOV, 1, 0.1, 20);
-  /* view = translate(0,0,-D) */
-  const MVP = new Float32Array(16);
-  /* P * V then * M, all combined numerically: */
-  const PM = mat4Mul(P, mat4Translate(-D));
-  const M4 = mat4From3(M);
-  mat4MulInto(MVP, PM, M4);
-
-  gl.clearColor(0, 0, 0, 0);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.uniformMatrix4fv(GLOBE._u.uMVP, false, MVP);
-  gl.uniformMatrix4fv(GLOBE._u.uModel, false, M4);
-  gl.uniform3fv(GLOBE._u.uLightDir, norm3([-0.35, 0.32, 0.85]));
-  gl.uniform3f(GLOBE._u.uEye, 0, 0, D);
-  const dark = isDarkTheme();
-  gl.uniform3fv(GLOBE._u.uRim, dark ? [0.25, 0.5, 0.9] : [0.35, 0.55, 0.85]);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, GLOBE._tex);
-  gl.uniform1i(GLOBE._u.uTex, 0);
-  gl.drawElements(gl.TRIANGLES, GLOBE._count, gl.UNSIGNED_SHORT, 0);
-
-  globeDrawOverlay(now, M, D);
+  if (!GLOBE._renderer) return;
+  GLOBE._sphere.rotation.set(GLOBE.pitch, GLOBE.yaw, 0);
+  GLOBE._camera.position.z = GLOBE.dist;
+  GLOBE._renderer.render(GLOBE._scene, GLOBE._camera);
+  globeDrawOverlay(now, modelMat(), GLOBE.dist);
 }
 
 /* ---------- overlay: city names + pin + satellite ---------- */
@@ -728,27 +676,4 @@ function drawSpace() {
       ctx.beginPath(); ctx.arc(x, y, 0.5 + s * 1.1, 0, 7); ctx.fill();
     }
   }
-}
-
-/* ---------- mat4 helpers (column-major for WebGL) ---------- */
-function mat4Translate(dz) {
-  return [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,dz,1];
-}
-function mat4From3(M) {
-  return [M[0],M[1],M[2],0, M[3],M[4],M[5],0, M[6],M[7],M[8],0, 0,0,0,1];
-}
-function mat4Mul(A, B) {
-  const O = new Float32Array(16);
-  mat4MulInto(O, A, B);
-  return O;
-}
-function mat4MulInto(O, A, B) {
-  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
-    O[c * 4 + r] = A[r] * B[c * 4] + A[4 + r] * B[c * 4 + 1] +
-                   A[8 + r] * B[c * 4 + 2] + A[12 + r] * B[c * 4 + 3];
-  }
-}
-function norm3(v) {
-  const L = Math.hypot(v[0], v[1], v[2]);
-  return [v[0] / L, v[1] / L, v[2] / L];
 }
