@@ -93,26 +93,37 @@ def _newest_cached_tile(layer: str, z: int, x: int, y: int) -> str | None:
     return None
 
 
+# For a date whose product has not been produced yet, GIBS answers with a
+# uniform black JPEG (HTTP 200, ~1.6 KB) instead of a 404. Real land tiles
+# are much larger, so a size floor is a cheap, dependency-free way to tell
+# "not yet available" from "available". Only applied where it is reliable.
+_MIN_REAL_BYTES = {"truecolor": 5000}
+
+
+def _looks_blank(layer: str, content: bytes) -> bool:
+    limit = _MIN_REAL_BYTES.get(layer)
+    return bool(limit) and len(content) < limit
+
+
 def _latest_available_date(layer: str, today: dt.date) -> str | None:
     """Probe GIBS for the newest date that has imagery for this layer.
     A single network failure does NOT abort the walk (transient errors
-    just move on to the next candidate date)."""
+    just move on to the next candidate date). A blank tile does not count
+    as available: GIBS serves black tiles for dates still being processed."""
     ident, tms, ext = (LAYERS[layer]["ident"], LAYERS[layer]["tms"],
                        LAYERS[layer]["ext"])
-    saw_network = False
     for back in _CANDIDATE_BACKDAYS.get(layer, [0, 1, 2]):
         d = (today - dt.timedelta(days=back)).isoformat()
         url = BASE.format(ident=ident, date=d, tms=tms, z=2, y=2, x=2, ext=ext)
         try:
-            r = _session.get(url, timeout=35, stream=True)
-            ok = r.status_code == 200
+            r = _session.get(url, timeout=35)
+            ok = r.status_code == 200 and not _looks_blank(layer, r.content)
             r.close()
-            saw_network = True
         except Exception:
             continue
         if ok:
             return d
-    return None if saw_network else None
+    return None
 
 
 def warm_hints() -> None:
@@ -122,6 +133,22 @@ def warm_hints() -> None:
     for layer, cfg in LAYERS.items():
         if not cfg.get("static"):
             _hint(layer)
+
+
+def warm_mosaic() -> None:
+    """Pre-fetch the z3 world mosaic (8x8 tiles per layer) that the 3D
+    globe needs for its texture, once per imagery day. Called by the
+    background thread so the first visitor never waits for ~128 downloads."""
+    for layer in ("truecolor", "bluemarble"):
+        hint = "static" if LAYERS[layer].get("static") else _hint(layer)
+        if not hint:
+            continue
+        for y in range(8):
+            for x in range(8):
+                try:
+                    get_tile(layer, 3, x, y)
+                except Exception:       # a single failed tile is fine
+                    pass
 
 
 def _hint(layer: str) -> str | None:
@@ -173,7 +200,8 @@ def get_tile(layer: str, z: int, x: int, y: int
                     r = _session.get(url, timeout=35)
                 except Exception:
                     r = None
-                if r is not None and r.status_code == 200:
+                if (r is not None and r.status_code == 200
+                        and not _looks_blank(layer, r.content)):
                     os.makedirs(os.path.dirname(p), exist_ok=True)
                     tmp = p + ".part"
                     with open(tmp, "wb") as f:

@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.engine import mcdm, ecocrop as eco, fao56, rotation as rot
 from backend.engine.aquacrop import estimate_yield, sum_tr_over_et0
+from backend.data import vegetation as veg
 
 PASS = FAIL = 0
 
@@ -214,6 +215,34 @@ def test_ahp():
           f"CR={r2['CR']:.4f}")
 
 
+# ------------------------------------------------- NDVI / EVI (MODIS) ----
+
+def test_vegetation():
+    print("\n[7] NDVI / EVI (MODIS MOD13Q1)")
+    check("scaled integer -> ratio (x0.0001)", veg._decode(1707) == 0.1707,
+          f"{veg._decode(1707)}")
+    check("fill value -3000 rejected", veg._decode(-3000) is None)
+    check("out-of-range 12000 rejected", veg._decode(12000) is None)
+
+    series = [
+        {"date": "2026-01-01", "ndvi": 0.10, "evi": 0.05},
+        {"date": "2026-02-01", "ndvi": 0.20, "evi": 0.08},
+        {"date": "2026-03-01", "ndvi": 0.30, "evi": 0.12},
+        {"date": "2026-04-01", "ndvi": 0.42, "evi": 0.18},
+    ]
+    a = veg.analyse(series)
+    check("latest composite reported",
+          a["latest"]["date"] == "2026-04-01"
+          and a["latest"]["ndvi"] == 0.42)
+    check("percentile rank vs own year",
+          a["latest"]["ndvi_percentile"] == 100.0
+          and a["latest"]["evi_percentile"] == 100.0)
+    check("seasonal peak identified", a["stats"]["ndvi"]["peak_date"] == "2026-04-01")
+    check("trend direction = greener", a["trend"]["direction"] == "greener")
+    check("EVI stays below NDVI on this series",
+          all(p["evi"] < p["ndvi"] for p in series))
+
+
 if __name__ == "__main__":
     print("=" * 62)
     print(" MCDM HUB -- ENGINE VALIDATION")
@@ -224,6 +253,7 @@ if __name__ == "__main__":
     test_aquacrop()
     test_rotation()
     test_ahp()
+    test_vegetation()
     print("\n" + "=" * 62)
     print(f" RESULT: {PASS} passed, {FAIL} failed")
     print("=" * 62)

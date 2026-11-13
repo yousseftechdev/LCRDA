@@ -9,6 +9,8 @@ Raspberry Pi 4 can host it with no pip installs:
 API:
   GET  /api/health  (alias: /health) -> {"status":"ok", cache entries...}
   GET  /api/crops?q=maiz            -> crop search (EcoCrop DB)
+  GET  /api/vegetation?lat=..&lon=.. -> 12 months of MODIS NDVI+EVI
+                                      (250 m, 16-day) for the field
   POST /api/recommend               -> full MCDM recommendation
        body: {"lat":..,"lon":..,"shortlist":["zea-mays",...] or null,
               "priorities":{"land":4,"harvest":3,"water":2,"soilnext":3,
@@ -63,8 +65,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         ctype = {"html": "text/html", "js": "text/javascript",
                  "css": "text/css", "svg": "image/svg+xml",
-                 "png": "image/png"}.get(full.rsplit(".", 1)[-1],
-                                         "application/octet-stream")
+                 "png": "image/png", "jpg": "image/jpeg",
+                 "json": "application/json", "woff2": "font/woff2",
+                 "ico": "image/x-icon"}.get(
+                     full.rsplit(".", 1)[-1], "application/octet-stream")
         with open(full, "rb") as f:
             body = f.read()
         self.send_response(200)
@@ -108,6 +112,16 @@ class Handler(BaseHTTPRequestHandler):
             if "?" in self.path:
                 q = self.path.split("q=", 1)[1].split("&")[0].replace("%20", " ")
             self._json({"crops": cropdb.search(q, limit=120)})
+        elif self.path.startswith("/api/vegetation"):
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                lat = float(qs["lat"][0])
+                lon = float(qs["lon"][0])
+            except (KeyError, ValueError, IndexError):
+                self._json({"error": "lat and lon are required"}, 400)
+                return
+            self._json(pipeline.get_vegetation(lat, lon))
         elif self.path.startswith("/api/"):
             self._json({"error": "unknown endpoint"}, 404)
         else:
@@ -178,23 +192,6 @@ def lan_ip() -> str:
         return ip
     except OSError:
         return "127.0.0.1"
-
-
-def warm_mosaic() -> None:
-    """Pre-fetch the z3 world mosaic (8x8 = 64 tiles per layer) that the
-    3D globe needs for its texture, once per imagery day. Doing it here
-    means the first farmer who opens the picker never waits for ~128
-    tile downloads; the hub absorbs them in the background instead."""
-    for layer in ("truecolor", "bluemarble"):
-        hint = "static" if LAYERS[layer].get("static") else _hint(layer)
-        if not hint:
-            continue
-        for y in range(8):
-            for x in range(8):
-                try:
-                    get_tile(layer, 3, x, y)
-                except Exception:        # single-tile failure is fine
-                    pass
 
 
 def _background_refresher() -> None:

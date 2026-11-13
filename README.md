@@ -35,6 +35,20 @@ Multi-season rotation planning uses **exact dynamic programming** over the
 transition-score matrix (same-family transitions forbidden), not greedy
 search.
 
+## Satellite greenness (NDVI / EVI) — context, not a criterion
+
+The hub also reads **12 months of NASA MODIS MOD13Q1** NDVI and EVI at 250 m
+(16-day composites, via the ORNL DAAC subsetting API) for the selected field.
+The “From orbit” card shows the latest values, the field’s own year-long
+percentile, the trend since the previous composite, and a seasonal chart.
+
+The two indices are deliberately **not** part of the MCDM ranking: they
+measure the vegetation currently on the ground, not the suitability of a
+candidate crop, and using them would double-count the climate/water criteria.
+The technical report (§7) documents both formulas, the pipeline and the
+reasons. `GET /api/vegetation?lat=…&lon=…` returns the series; it is cached
+for 7 days and never blocks the crop advice.
+
 ## Run it
 
 ```bash
@@ -59,16 +73,22 @@ backend/
   engine/               mcdm.py (AHP+SAW+TOPSIS), ecocrop.py, fao56.py,
                         soil.py, aquacrop.py, rotation.py
   data/                 power.py (NASA POWER client), soilgrids.py (ISRIC),
-                        crops.py (FAO EcoCrop DB loader, 2568 crops, + FAO-56 Kc)
+                        crops.py (FAO EcoCrop DB loader, 2568 crops, + FAO-56 Kc),
+                        vegetation.py (MODIS MOD13Q1 NDVI/EVI via ORNL DAAC),
+                        gibs.py (NASA GIBS map tiles, offline disk cache)
   storage.py            SQLite cache (24 h TTL, offline-first)
   app.py                recommendation pipeline orchestrator
   server.py             stdlib HTTP server + JSON API + 24 h refresher thread
 frontend/               farmer-friendly web UI (plain language, no math,
-                        no emojis, SVG favicon, offline satellite map picker
-                        with parameter layers, NASA/FAO/ISRIC attribution;
-                        world.json = Natural Earth 110m land, public domain,
-                        offline base layer)
-tests/test_mcdm.py      35 tests; reproduces the paper's numerical example
+                        no emojis, SVG favicon, permanent 3D globe picker with
+                        parameter layers, NDVI/EVI “From orbit” card, NASA/FAO/
+                        ISRIC attribution; world.json = Natural Earth 110m land,
+                        public domain, offline base layer)
+  vendor/               locally vendored, no CDN: three.js r149, GSAP 3.12.5 +
+                        ScrollTrigger, tsParticles slim 3.7.1, VanillaTilt 1.8.1,
+                        Archivo + Public Sans woff2 (see vendor/README.md)
+  effects.js            GSAP reveals, tilt, cursor particles, ripples, spotlight
+tests/test_mcdm.py      43 tests; reproduces the paper's numerical example
 docs/                   technical report (PDF) + generator
 scripts/                install.sh (venv + systemd), run.sh
 systemd/                lcrda.service (auto-restart service)
@@ -85,5 +105,11 @@ check of the rotation planner.
 
 - FAO EcoCrop database (via OpenCLIM/ecocrop, Open Government Licence v3)
 - NASA POWER (public domain), ISRIC SoilGrids (CC-BY-4.0)
+- NASA GIBS / Worldview (MODIS, SMAP, VIIRS, IMERG imagery) and NASA Blue
+  Marble Next Generation
+- NASA MODIS MOD13Q1 v061 NDVI/EVI via the ORNL DAAC subsetting API
+  (public domain; Huete et al. 2002, Didan 2021)
+- three.js (MIT), GSAP + ScrollTrigger (GSAP standard licence), tsParticles
+  (MIT), VanillaTilt (MIT); Archivo and Public Sans (SIL Open Font Licence)
 - FAO-56 & AquaCrop methodology (FAO)
 - MCDM formulation: Gunawan et al. 2024; AHP: Saaty 1980; TOPSIS: Hwang & Yoon 1981

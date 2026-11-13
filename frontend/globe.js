@@ -24,6 +24,9 @@ const GLOBE = {
   _texCache: {},            // layer -> {base, data, eq, tex, pending, done}
   _land: null, _landPromise: null,
   _px: 0, _py: 0, _hover: false,   // pointer position for parallax/glow
+  /* the globe lives on the deep-space hero in both themes, so its
+     backdrop and labels always use the dark-space treatment */
+  _spaceDark: true,
 };
 
 const RAD = Math.PI / 180;
@@ -615,19 +618,21 @@ function globeDrawOverlay(now, M, D) {
   const dpr = GLOBE._dpr || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, GLOBE._W, GLOBE._H);
-  const dark = isDarkTheme();
+  const dark = GLOBE._spaceDark !== false;
 
   /* city labels -- the deeper you zoom, the smaller the towns we show.
      GeoNames cities15000 is sorted by population desc, so `break` is safe. */
   if (GLOBE._cities && GLOBE._cityVec) {
-    const minPop = D > 3.6 ? 6e6
+    const small = GLOBE._W < 460;
+    const minPop = (D > 3.6 ? 6e6
                  : D > 3.0 ? 2.5e6
                  : D > 2.5 ? 1e6
                  : D > 2.1 ? 400e3
                  : D > 1.8 ? 150e3
                  : D > 1.55 ? 60e3
-                 : 15e3;                       // deepest: every city in the set
-    const cap = Math.round((D < 1.9 ? 60 : 44) * (GLOBE._W < 460 ? 0.72 : 1));
+                 : 15e3) * (small ? 4 : 1);
+    /* a phone-sized globe cannot hold 30 names without them colliding */
+    const cap = small ? 13 : (D < 1.9 ? 60 : 44);
     const labels = [];
     const v = GLOBE._cityVec;
     const f = 1 / Math.tan(FOV / 2);
@@ -653,7 +658,8 @@ function globeDrawOverlay(now, M, D) {
     let shown = 0;
     for (const { c, pr } of labels) {
       if (shown >= cap) break;
-      const fs = Math.max(8.5, Math.min(12.5, 7.4 + 1.8 * Math.log10(c.p / 1e4)));
+      const fs = Math.max(8.5, Math.min(small ? 10.5 : 12.5,
+        7.4 + 1.8 * Math.log10(c.p / 1e4)));
       const wEst = c.n.length * fs * 0.6 + 8;
       const box = [pr.x - 2, pr.y - fs / 2 - 1, pr.x + wEst, pr.y + fs / 2 + 1];
       /* do not let names run off the canvas or collide with another name */
@@ -725,7 +731,7 @@ function drawSpace() {
   const dpr = GLOBE._dpr || 1, W = GLOBE._W, H = GLOBE._H;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
-  const dark = isDarkTheme();
+  const dark = GLOBE._spaceDark !== false;
   const cx = W / 2, cy = H / 2;
   const f = (H / 2) / Math.tan(FOV / 2);
   const R = f / Math.sqrt(GLOBE.dist * GLOBE.dist - 1);

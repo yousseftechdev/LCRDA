@@ -64,7 +64,21 @@ def EQ(text):
 
 
 def table(data, widths=None, header=True):
-    t = Table(data, colWidths=widths, repeatRows=1 if header else 0)
+    """Render a table with wrapping cells.
+
+    Table cells given as plain strings are converted to Paragraphs: without
+    this, long text does not wrap and spills across neighbouring columns.
+    """
+    cell = ParagraphStyle("cell", fontName="DVS", fontSize=8.5, leading=10.6)
+    cellh = ParagraphStyle("cellh", fontName="DVS-B", fontSize=8.5,
+                           leading=10.6, textColor=colors.white)
+
+    def wrap(v, is_head):
+        return Paragraph(v, cellh if is_head else cell) if isinstance(v, str) else v
+
+    rows = [[wrap(v, header and r == 0) for v in row]
+            for r, row in enumerate(data)]
+    t = Table(rows, colWidths=widths, repeatRows=1 if header else 0)
     st = [("FONTNAME", (0, 0), (-1, -1), "DVS"),
           ("FONTSIZE", (0, 0), (-1, -1), 8.5),
           ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#9dbb90")),
@@ -91,8 +105,8 @@ A(Spacer(1, 0.8 * cm))
 A(P("NASA Space Apps Challenge 2026 — Crop Rotation Decision-Support Challenge",
     "body"))
 A(P("Implementation: Raspberry Pi 4 hub · NASA POWER + ISRIC SoilGrids · "
-    "FAO EcoCrop · FAO-56 · AquaCrop · AHP/SAW/TOPSIS · dynamic-programming "
-    "rotation planner", "body"))
+    "MODIS NDVI/EVI · FAO EcoCrop · FAO-56 · AquaCrop · AHP/SAW/TOPSIS · "
+    "dynamic-programming rotation planner", "body"))
 A(Spacer(1, 0.6 * cm))
 A(P("Technical Report — what MCDM is, the exact mathematics, and how it is "
     "implemented in this project", "small"))
@@ -125,6 +139,14 @@ A(P(
     "suitability 0.76, 0.69, 0.63; winner A), alongside unit tests of every "
     "physical equation and a brute-force optimality check of the rotation "
     "planner."))
+A(P(
+    "Alongside the decision inputs, the hub reads a year of NASA MODIS "
+    "satellite greenness — NDVI and EVI — for the chosen field. This is a "
+    "<b>context layer, not a ranking criterion</b>: it helps the farmer see "
+    "how the field is actually behaving, but it has no weight and never "
+    "changes the crop order. Section 7 documents both indices, their exact "
+    "formulas, the MOD13Q1 product, the processing pipeline, the live "
+    "worked example, and the reasons for that deliberate separation."))
 
 # ===================== 2. WHAT IS MCDM =====================
 A(P("2. MCDM inside a DSS — the method this hub implements", "h1"))
@@ -169,7 +191,9 @@ A(P(
     "T2M_MIN, PRECTOTCORR, WS2M, RH2M, ALLSKY_SFC_SW_DWN) and ISRIC SoilGrids "
     "soil properties (pH, sand, clay, soil organic carbon over 0–60 cm), "
     "cached locally in SQLite and refreshed every 24 hours; every feature "
-    "keeps working from cache when the hub is offline."))
+    "keeps working from cache when the hub is offline. A parallel context "
+    "channel fetches NASA MODIS NDVI/EVI for the same point (§7); it is "
+    "displayed to the farmer but never enters the ranking."))
 A(P("Step 1 — <b>Candidate crops</b>: the FAO EcoCrop database (2 568 crops "
     "with temperature, precipitation, soil and cycle parameters) is bundled "
     "on the hub; the farmer shortlists crops or uses the curated default set "
@@ -394,8 +418,238 @@ A(P("with back-pointers recovering the optimal sequence; complexity "
     "legumes credit ≈ +60 kg N/ha, non-legumes debit ≈ −45 kg N/ha per "
     "season."))
 
-# ===================== 7. SYSTEM =====================
-A(P("7. The hub system", "h1"))
+# ===================== 7. NDVI / EVI =====================
+A(P("7. Vegetation indices from orbit: NDVI and EVI", "h1"))
+A(P(
+    "The hub also reads a year of satellite greenness for the selected "
+    "field. This section explains the two indices — the Normalized "
+    "Difference Vegetation Index (NDVI) and the Enhanced Vegetation Index "
+    "(EVI) — their exact formulas, the NASA product they come from, how the "
+    "hub processes them, and, just as importantly, why they are shown as "
+    "context and deliberately kept out of the MCDM ranking."))
+
+A(P("7.1 NDVI — the normalized difference", "h2"))
+A(P(
+    "Healthy leaves absorb most of the red light they receive, because "
+    "chlorophyll uses it for photosynthesis, and scatter most of the "
+    "near-infrared (NIR) light because leaf cell structure reflects it. The "
+    "stronger the canopy, the larger the contrast between the two. NDVI "
+    "turns that contrast into one number (Rouse et al. 1974; Tucker 1979):"))
+A(EQ("NDVI = (ρ<sub>NIR</sub> − ρ<sub>red</sub>) / "
+     "(ρ<sub>NIR</sub> + ρ<sub>red</sub>)"))
+A(P(
+    "where ρ<sub>NIR</sub> and ρ<sub>red</sub> are surface reflectances in "
+    "the near-infrared (MODIS band 2, 841–876 nm) and red (band 1, "
+    "620–670 nm) wavelengths. The ratio is normalized to [−1, 1]. Negative "
+    "values indicate water, snow or cloud; values near zero indicate bare "
+    "soil, rock, dry stubble or built-up land; positive values rise with the "
+    "amount of living green leaf area. For a field, the seasonal shape — "
+    "green-up, peak, senescence — is usually more informative than any "
+    "single number."))
+A(table([
+    ["NDVI", "What the value usually indicates (indicative only)"],
+    ["below 0", "water, snow, ice, or a cloud-contaminated pixel"],
+    ["0.0 – 0.15", "bare soil, rock, dry stubble, roads and buildings"],
+    ["0.15 – 0.30", "sparse vegetation, newly emerged or senescing crops"],
+    ["0.30 – 0.60", "developing to full crop canopy"],
+    ["0.60 – 0.90", "dense, healthy canopy (irrigated crops, forest)"],
+], [3.2*cm, 14.2*cm]))
+A(P(
+    "NDVI is simple, long-running and comparable across sensors, which is "
+    "why it became the continuity index for global vegetation monitoring. "
+    "It has three well-known weaknesses: it <b>saturates</b> over dense "
+    "canopies, because red reflectance is already fully absorbed and extra "
+    "leaf area barely changes the ratio; the <b>soil background</b> biases "
+    "it at low cover; and <b>aerosols and thin cloud</b> affect the red and "
+    "NIR bands differently. EVI was designed to address these."))
+
+A(P("7.2 EVI — the enhanced vegetation index", "h2"))
+A(P(
+    "EVI keeps the same red/NIR contrast but adds a blue band and three "
+    "correction terms (Huete et al. 2002):"))
+A(EQ("EVI = G · (ρ<sub>NIR</sub> − ρ<sub>red</sub>) / "
+     "(ρ<sub>NIR</sub> + C<sub>1</sub>·ρ<sub>red</sub> − "
+     "C<sub>2</sub>·ρ<sub>blue</sub> + L)"))
+A(P(
+    "with the coefficients adopted for MODIS: <b>G = 2.5</b> (gain, which "
+    "scales the index), <b>C<sub>1</sub> = 6</b> and "
+    "<b>C<sub>2</sub> = 7.5</b> (aerosol-resistance coefficients), and "
+    "<b>L = 1</b> (canopy-background adjustment). The blue band (MODIS band "
+    "3, 459–479 nm) is used because aerosol scattering is stronger in the "
+    "blue than in the red: the C<sub>1</sub>/C<sub>2</sub> terms estimate "
+    "and remove the part of the red signal caused by haze rather than by "
+    "the canopy. L compensates for the non-linear transfer of red and NIR "
+    "radiation through a canopy and for the brightness of the soil below "
+    "it. G brings the result into a familiar range."))
+A(P(
+    "EVI is generally lower than NDVI for the same canopy, but it keeps "
+    "responding where NDVI has saturated, and it is much less sensitive to "
+    "a bright soil background or a hazy atmosphere. Over very bright "
+    "targets — snow, ice, thick cloud — the three-band EVI becomes "
+    "unstable, so the MODIS algorithm substitutes a two-band EVI (without "
+    "the blue term) for those pixels; the hub consumes the EVI layer as the "
+    "product delivers it. Neither index is “more correct” in general: they "
+    "are two views of the same canopy, which is why the hub shows both."))
+A(P(
+    "The Cairo example in §7.4 makes the difference concrete. There NDVI is "
+    "0.17 while EVI is only 0.09. The field sits on the desert fringe, where "
+    "bright soil and airborne dust inflate the simple red/NIR ratio; EVI's "
+    "soil and aerosol corrections remove much of that signal. A global NDVI "
+    "threshold would call this field “sparse vegetation”; relative to its "
+    "own year it is in fact at its greenest. That is exactly why the hub "
+    "compares each field with itself, not with a world map."))
+
+A(P("7.3 The data product and the hub pipeline", "h2"))
+A(P(
+    "Both indices come from one product, so they describe the same "
+    "observations: <b>MODIS/Terra MOD13Q1, Collection 6.1</b>, the standard "
+    "NASA 250 m, 16-day vegetation-index composite (Didan 2021; MODIS VI "
+    "User Guide 2015). The 16-day maximum-value composite selects, for each "
+    "pixel, the best observation from all acquisitions in the period using "
+    "low cloud, low view angle and the highest index value — a practical "
+    "way to suppress cloud contamination."))
+A(table([
+    ["Property", "MOD13Q1 value used by the hub"],
+    ["Product", "MODIS/Terra Vegetation Indices, 16-day L3 Global 250 m SIN Grid, v061"],
+    ["Spectral bands", "red 620–670 nm (band 1), NIR 841–876 nm (band 2), blue 459–479 nm (band 3, EVI only)"],
+    ["Spatial resolution", "250 m — one pixel covers ~6.25 ha at the equator"],
+    ["Temporal composite", "16 days; ~22–23 complete composites per year"],
+    ["Layers requested", "250m_16_days_NDVI and 250m_16_days_EVI"],
+    ["Storage encoding", "int16, scale factor 0.0001, fill −3000, valid range −2000…10000"],
+    ["Access", "ORNL DAAC MODIS/VIIRS Subsetting Tool REST API, no token required"],
+    ["Coverage", "global land, 2000–present"],
+    ["Hub cadence", "12-month series per field, cached 7 days"],
+], [4.4*cm, 13.0*cm]))
+A(P(
+    "The pipeline is deliberately small and reproducible:"))
+A(table([
+    ["Step", "What the hub does"],
+    ["1. Request", "one pixel at the field's latitude/longitude (kmAboveBelow = 0, kmLeftRight = 0), one year back from today"],
+    ["2. Window", "the API returns at most 10 composites per call, so the year is split into three ~150-day windows for each band (six calls, run in parallel; ~10 s uncached)"],
+    ["3. Decode", "raw int16 × 0.0001; discard the fill value −3000 and anything outside the valid range −2000…10000"],
+    ["4. Pair", "keep a date only when NDVI and EVI are both valid — the two indices must come from the same composite"],
+    ["5. Cache", "SQLite dataset mod13q1_veg: 7-day time-to-live, an error payload is retried after 1 h, and the recommendation keeps working offline without vegetation data"],
+    ["6. Analyse", "latest values, percentile within the field's own year, change since the previous composite, seasonal peak and trough with dates, number of composites"],
+    ["7. Present", "the “From orbit” card and seasonal chart, always with the composite date and the product attribution"],
+], [3.0*cm, 14.4*cm]))
+A(P(
+    "The values are exposed by <b>GET /api/vegetation?lat=…&amp;lon=…</b>. "
+    "The response carries the series, the latest values, the statistics, the "
+    "trend, the source string and the count; when the service is offline the "
+    "endpoint returns an error object and the card degrades to a plain "
+    "message — the crop advice is never blocked by it."))
+
+A(P("7.4 Reading the numbers", "h2"))
+A(P(
+    "A single index value has no universal meaning: 0.4 can be a good year "
+    "in a temperate maize field and a very good year on a dry rangeland. The "
+    "hub therefore reports <b>relative</b> measures computed from the "
+    "field's own 12 months:"))
+A(table([
+    ["Output", "Definition used in the hub"],
+    ["Latest NDVI / EVI", "the most recent complete composite, with its date"],
+    ["Percentile", "share of the field's own composites in the past year with a lower value (0–100); “greenest reading in the past year” when ≥ 99"],
+    ["Trend", "difference from the previous composite; a change larger than ±0.02 is called greener or drier, otherwise steady (a deliberately conservative threshold for a 250 m mixed pixel)"],
+    ["Peak / trough", "highest and lowest index value in the year, with the dates"],
+    ["Count", "number of valid complete composites behind the summary"],
+], [3.6*cm, 13.8*cm]))
+A(P(
+    "<b>Live worked example</b> — the default field in the app "
+    "(30.0444 N, 31.2357 E, Cairo) on 13 November 2026: 22 complete "
+    "composites. The latest, for 16 October 2026, is NDVI 0.17 and EVI 0.09. "
+    "NDVI ranges from 0.07 (2 February 2026) to 0.17, with the peak on "
+    "16 October; EVI peaks at 0.09 on 9 May. The latest NDVI is the highest "
+    "of the 22 composites (100th percentile), and the change since the "
+    "previous composite is +0.038, so the card reads “the field is greening "
+    "since the previous 16-day reading”. The absolute values are low — "
+    "typical of a dry, sparsely vegetated 250 m pixel on the desert fringe — "
+    "but the seasonal signal is real and is read against this field's own "
+    "baseline. The same run also illustrates the NDVI/EVI difference: the "
+    "bright soil background lifts NDVI more than EVI."))
+
+A(P("7.5 How the indices are used in this project — and what they are not "
+    "used for", "h2"))
+A(P(
+    "<b>Used for.</b> The pair is a field-condition panel: it shows how green "
+    "the field is now and how that greenness moved through the year, so the "
+    "farmer can notice drought stress, delayed green-up, an early "
+    "senescence, or a field that is not doing what they expected. It is also "
+    "a transparency device: the composite date, the product and the source "
+    "are printed with the chart, so the farmer can see exactly what the "
+    "satellite saw and when."))
+A(P(
+    "<b>Not used for.</b> NDVI and EVI are <b>not criteria</b> in the MCDM "
+    "model. They do not appear in c<sub>ij</sub>, they carry no weight, and "
+    "they do not enter the SAW score, the TOPSIS check or the rotation "
+    "dynamic program. This is a deliberate design decision, documented so "
+    "that the ranking can be audited: every number that influences the "
+    "ranking has a weight shown in §5, and the vegetation indices have "
+    "none. There are four reasons:"))
+A(P(
+    "<b>(1) Double counting.</b> The climate and water criteria already "
+    "encode the site's temperature and rainfall from NASA POWER. Greenness "
+    "is largely a response to those same drivers; adding it as a criterion "
+    "would count one signal twice and silently inflate its effective weight."))
+A(P(
+    "<b>(2) Target mismatch.</b> NDVI and EVI measure the vegetation that is "
+    "on the ground now, not the suitability of a candidate crop. A fallow "
+    "field with NDVI 0.1 can be an excellent choice for wheat; a green patch "
+    "of weeds says nothing about whether a crop fits. Suitability is a "
+    "forward-looking question about requirements, and it is answered by "
+    "EcoCrop, FAO-56 and SoilGrids."))
+A(P(
+    "<b>(3) Temporal mismatch.</b> The recommendation is for the next "
+    "season; the latest composite describes the previous 16 days. Using a "
+    "past observation as a future suitability score would confuse state "
+    "with forecast."))
+A(P(
+    "<b>(4) Spatial mismatch.</b> A 250 m pixel mixes the field with tracks, "
+    "neighbouring plots, bare patches and buildings. It cannot support a "
+    "field-level suitability claim. It can, however, support a "
+    "conversation — which is precisely how the card presents it."))
+A(P(
+    "Keeping the indices outside the ranking also protects the project's "
+    "plain-language promise: the farmer never has to understand a remote-"
+    "sensing index to understand why a crop was recommended. The greenness "
+    "panel answers a different question — “how is my field doing?” — and "
+    "says so on its face."))
+
+A(P("7.6 Limitations specific to the vegetation panel", "h2"))
+A(P(
+    "1. <b>Mixed pixels.</b> At 250 m, one value covers ~6.25 ha. A small "
+    "field shares its pixel with roads, neighbours and bare ground; the "
+    "panel is a landscape-scale context, not a per-field measurement."))
+A(P(
+    "2. <b>Composite timing.</b> A 16-day maximum-value composite describes "
+    "the best observation in that window, not a specific day. Events "
+    "shorter than the window — a single heat spike, a flash flood — can be "
+    "smoothed away."))
+A(P(
+    "3. <b>Quality screening.</b> The hub keeps values inside the product's "
+    "valid range and requires both NDVI and EVI on the same date, but it "
+    "does not yet decode the detailed pixel-reliability/VI-quality layers. "
+    "Residual thin cloud or aerosol can therefore survive in a composite; "
+    "the trend note is worded conservatively for that reason."))
+A(P(
+    "4. <b>Index behaviour.</b> NDVI saturates in dense canopies; EVI is "
+    "noisier over bright targets (snow, ice, thick cloud), where MODIS "
+    "switches to a two-band EVI. The hub displays the product's EVI layer "
+    "as delivered and does not attempt its own atmospheric correction."))
+A(P(
+    "5. <b>Green is not crop.</b> Neither index distinguishes a crop from "
+    "weeds, cover crops or volunteer vegetation. A green field is not "
+    "necessarily a well-managed field."))
+A(P(
+    "6. <b>No absolute calibration.</b> The indices are not biomass or "
+    "yield. They are compared within the field's own year and shown as "
+    "relative context, not converted into kilograms or tonnes."))
+A(P(
+    "7. <b>One-year window.</b> Twelve months is enough to characterise the "
+    "seasonal cycle but not to establish multi-year degradation or a "
+    "long-term trend; the hub does not claim one."))
+
+# ===================== 8. SYSTEM =====================
+A(P("8. The hub system", "h1"))
 A(table([
     ["Component", "Implementation", "Notes"],
     ["Hardware target", "Raspberry Pi 4", "backend: Python stdlib + numpy (+ requests for data fetches)"],
@@ -403,12 +657,15 @@ A(table([
     ["Deployment", "systemd service + venv (INSTALLED and verified)", "scripts/install.sh creates the venv (numpy), installs systemd/lcrda.service (auto-restart, verified by SIGKILL test), and a daemon thread re-pulls NASA POWER for every cached location every 24 h"],
     ["Climate data", "NASA POWER daily point API (7 variables)", "cached in SQLite; 24-hour refresh (background thread); one request per 0.5° cell (NASA fair-use)"],
     ["Map imagery", "NASA GIBS WMTS (MODIS true colour, SMAP soil moisture, MODIS LST, VIIRS NDVI, IMERG rain)", "daily imagery through the hub proxy /api/maptile, disk-cached per day (offline = newest cached day, Natural Earth outlines as base layer); tiles older than 8 days auto-purged; layer dates auto-resolved (lagging products probed at their likely date)"],
+    ["Vegetation context", "NASA MODIS MOD13Q1 v061 (NDVI + EVI, 250 m, 16-day) via the ORNL DAAC subsetting API", "one pixel at the field, 12-month series, cached 7 days; shown as the “From orbit” card with a seasonal chart and composite date; explicitly NOT an MCDM criterion — see §7"],
     ["Soil data", "ISRIC SoilGrids 2.0 REST (pH, sand, clay, SOC, 0–60 cm)", "cached 30 days; handles NULL cells (rivers, dense cities) by sampling the nearest valid cells within ~30 km; error payloads retry after 1 h, never live a full TTL"],
     ["Crop parameters", "FAO EcoCrop database, 2 568 crops", "bundled CSV (FAO EcoCrop / OpenCLIM, OGL v3)"],
     ["Decision engine", "AHP → SAW → TOPSIS + DP rotation", "fully deterministic, reproducible; when SAW and TOPSIS disagree the UI says the choice is a close call and names the runner-up"],
     ["Offline behaviour", "all features run from cache", "designed for farmers without internet"],
 ], [3.6*cm, 5.8*cm, 7.8*cm]))
-A(P("API surface: GET /api/health, GET /api/crops?q=…, POST /api/recommend "
+A(P("API surface: GET /api/health, GET /api/crops?q=…, GET /api/vegetation "
+    "?lat=…&amp;lon=… (12 months of MODIS NDVI/EVI context, never part of the "
+    "ranking), POST /api/recommend "
     "(lat, lon, shortlist, farmer priorities {land, harvest, water, "
     "soilnext, market} on 1–5 — raw 1–9 criterion keys also accepted, "
     "previous crop, water available in mm (null = rainfed), market scores "
@@ -416,7 +673,7 @@ A(P("API surface: GET /api/health, GET /api/crops?q=…, POST /api/recommend "
     "closeCall when the two methods disagree), POST /api/refresh "
     "(fair-use guarded: refetches only when the cache is stale)."))
 
-A(P("7.1 Validation", "h2"))
+A(P("8.1 Validation", "h2"))
 A(table([
     ["Test", "Expected", "Result"],
     ["Paper numerical example (SAW)", "Z_A=0.76, Z_B=0.69, Z_C=0.63, winner A", "PASS (machine precision)"],
@@ -425,14 +682,16 @@ A(table([
     ["AquaCrop B = WP*·Σ(Tr/ET₀), Y = HI·B", "exact algebra", "PASS"],
     ["AHP consistency diagnostics", "CR ≤ 0.1 detection", "PASS"],
     ["Rotation DP vs brute force", "identical optimum", "PASS"],
+    ["MODIS NDVI/EVI client", "scale 0.0001, fill −3000 / valid −2000…10000, same-date NDVI+EVI pairing", "PASS"],
     ["End-to-end live run (Egypt, 29.2 N 31.0 E)", "winter crops for Nov sowing; AHP CR 0.0092; SAW=TOPSIS winner", "PASS"],
 ], [5.2*cm, 6.6*cm, 5.4*cm]))
-A(P("35/35 tests pass (mcdm-hub/tests/test_mcdm.py). The end-to-end run used "
+A(P("43/43 tests pass (mcdm-hub/tests/test_mcdm.py), including the NDVI/EVI "
+    "decoding, pairing and summary-analysis tests. The end-to-end run used "
     "live NASA POWER data (366 days cached, ET₀ mean 6.79 mm/day) and live "
     "SoilGrids data (pH 8.0, clay 24.8 %, sand 47.5 %, SOC 4.8 %)."))
 
 # ===================== 8. LIMITATIONS =====================
-A(P("8. Known limitations (documented, not hidden)", "h1"))
+A(P("9. Known limitations (documented, not hidden)", "h1"))
 A(P("1. <b>Screening-level yield</b>: the AquaCrop implementation is the "
     "conceptual equation without the full daily soil-water–canopy simulation; "
     "treat yields as relative indicators. Calibrate with local data before "
@@ -452,9 +711,13 @@ A(P("6. <b>Market criterion</b> is farmer-entered until a price data source "
     "is integrated."))
 A(P("7. <b>24-hour cache</b> is a fairness/simplicity trade-off; POWER "
     "updates daily, so no information is lost."))
+A(P("8. <b>Vegetation indices are context, not criteria.</b> NDVI/EVI are "
+    "250 m mixed-pixel observations of current land cover; §7.5 explains why "
+    "they carry no weight in the ranking and §7.6 lists their own "
+    "limitations (composite timing, QA, saturation, one-year window)."))
 
 # ===================== 9. REFERENCES =====================
-A(P("9. References", "h1"))
+A(P("10. References", "h1"))
 for r in [
     "[1] Gunawan, M. I., Sitopu, J. W., & Sechan, G. (2024). Optimizing Crop "
     "Selection: A Multi-Criteria Decision Support System for Sustainable "
@@ -494,16 +757,34 @@ for r in [
     "FAO Irrigation & Drainage Paper 25 (80% rule).",
     "[15] NASA Space Apps Challenge 2026 challenge statement: crop rotation "
     "decision-support tool using NASA Earth observations (team Resources.md).",
+    "[16] Huete, A., Didan, K., Miura, T., Rodriguez, E. P., Gao, X., & "
+    "Ferreira, L. G. (2002). Overview of the radiometric and biophysical "
+    "performance of the MODIS vegetation indices. Remote Sensing of "
+    "Environment 83(1–2):195–213. doi:10.1016/S0034-4257(02)00096-2.",
+    "[17] Didan, K. (2021). MODIS/Terra Vegetation Indices 16-Day L3 Global "
+    "250m SIN Grid V061 [Data set]. NASA EOSDIS Land Processes DAAC. "
+    "doi:10.5067/MODIS/MOD13Q1.061.",
+    "[18] MODIS Vegetation Index User's Guide (MOD13 Series), Version 6.1 "
+    "(2015). LP DAAC / University of Arizona. "
+    "lpdaac.usgs.gov/documents/621/MOD13_User_Guide_V61.pdf.",
+    "[19] ORNL DAAC MODIS/VIIRS Subsetting Tool and REST API "
+    "(modis.ornl.gov/rst/api/v1).",
+    "[20] Tucker, C. J. (1979). Red and photographic infrared linear "
+    "combinations for monitoring vegetation. Remote Sensing of Environment "
+    "8(2):127–150.",
+    "[21] Rouse, J. W., Haas, R. H., Schell, J. A., & Deering, D. W. (1974). "
+    "Monitoring vegetation systems in the Great Plains with ERTS. NASA "
+    "Special Publication 351:309–317.",
 ]:
     A(P(r, "small"))
 
 A(Spacer(1, 0.5 * cm))
 A(P("Appendix A — repository map: mcdm-hub/run.py (entry) · backend/engine/ "
     "(mcdm, ecocrop, fao56, soil, aquacrop, rotation) · backend/data/ (power, "
-    "soilgrids, crops + EcoCrop_DB.csv) · backend/storage.py (SQLite cache) · "
-    "backend/app.py (pipeline) · backend/server.py (HTTP) · frontend/ (UI) · "
-    "tests/test_mcdm.py (35 tests) · agent.md (full research & work log).",
-    "small"))
+    "soilgrids, crops + EcoCrop_DB.csv, vegetation) · backend/storage.py "
+    "(SQLite cache) · backend/app.py (pipeline) · backend/server.py (HTTP) · "
+    "frontend/ (UI) · tests/test_mcdm.py (43 tests) · agent.md (full research "
+    "& work log).", "small"))
 
 # ---------------- build ----------------
 doc = BaseDocTemplate(OUT, pagesize=A4,

@@ -864,3 +864,157 @@ GPM IMERG (rainfall), NASA POWER (weather/climate), NASA GIBS/Worldview
   `scheduleSpace()` to avoid a redraw per mouse event.
 * AI integration was **requested as a suggestion only** and deliberately not
   implemented (see the handoff message that accompanies this commit).
+
+---
+
+## 12. SESSION 2026-11-13 — “Orbital agronomy” UI overhaul + NDVI/EVI report
+
+### 12.0 User prompts (verbatim)
+
+**Prompt 7a:**
+> "Improve the UI, I want more 3D elements, I want more mouse interations,
+> hovers, actives, maybe particles that interact with the cursor, animations,
+> USE LIBRARIES, USE THE WEB, DON'T IMPROVISE, YOU'RE NOT GOOD WITH UI."
+
+**Prompt 7b:**
+> "Update the explanation PDF, explain NVDI, and EVI, their formulas, and how
+> they're used in our project."
+
+### 12.1 Research before building
+
+* Read the full handoff (`agent.md` §1–11), `Resources.md`, README, and the
+  frontend/backend sources before changing anything.
+* Checked current versions and licences of the libraries actually used, then
+  **vendored every one locally** (`frontend/vendor/`, inventory in
+  `vendor/README.md`): three.js r149 (already present), GSAP 3.12.5 +
+  ScrollTrigger 3.12.5, tsParticles slim 3.7.1, VanillaTilt 1.8.1, Archivo and
+  Public Sans woff2 (latin subsets). **No runtime CDN** — the Pi stays offline.
+* Verified the NDVI/EVI formulas against primary sources (MODIS VI User Guide
+  v6.1, Huete et al. 2002; MOD13Q1 v061 product page and file spec):
+  NDVI = (NIR−red)/(NIR+red); EVI = G·(NIR−red)/(NIR+C1·red−C2·blue+L) with
+  G=2.5, C1=6, C2=7.5, L=1; 250 m, 16-day MVC, int16 ×0.0001, fill −3000,
+  valid −2000…10000.
+
+### 12.2 Design direction — “orbital agronomy”
+
+* A field ledger crossed with a mission console: a permanent deep night-green
+  hero (dark in **both** themes) around the globe, warm paper working cards for
+  long reading outdoors, lime/sun/sky accents, Archivo display + Public Sans
+  body. No emojis, no exposed math.
+* Step 1 is now a permanent hero: headline + lat/lon + NASA context stats on
+  the left, the 3D globe in an “instrument” panel on the right. Steps 2–4 are
+  spotlight cards; results keep the farmer language and 0–5 bars.
+
+### 12.3 Backend — real NDVI/EVI, not just documentation
+
+* New `backend/data/vegetation.py`: NASA MODIS **MOD13Q1 v061** (Terra, 250 m,
+  16-day) via the **ORNL DAAC** subsetting REST API (no token). One year is
+  split into three ~150-day windows × two bands = six parallel requests; the
+  API caps a request at 10 composites. Decodes int16 ×0.0001, drops fill/out of
+  range, keeps only dates where **both** NDVI and EVI are valid.
+* `app.get_vegetation()`: SQLite dataset `mod13q1_veg`, 7-day TTL, an error
+  payload retried after 1 h, never raises (advice must work offline).
+* `GET /api/vegetation?lat=…&lon=…` added to `server.py`; static MIME table
+  extended for the vendored fonts/libs.
+* `tests/test_mcdm.py`: new `test_vegetation()`; suite is now **43/43**.
+* Live Cairo check: 22 composites, latest 16 Oct 2026 NDVI 0.1707 / EVI 0.088,
+  NDVI 100th percentile, EVI peak 9 May, trend +0.038 “greener”.
+
+### 12.4 Frontend rewrite
+
+* `index.html`: hero + globe picker, steps 2–4, action bar, results
+  (`#summary`, `#vegetation`, `#plan`, `#others`, sources), footer, library
+  script order. Theme boot script now also accepts `?theme=light|dark` (useful
+  for sharing and for visual QA).
+* `style.css` (~935 lines): font faces, tokens, hero/globe instrument panel,
+  spotlight cards, 3D step discs, sliders, results/score bars, dark “From
+  orbit” vegetation card, seed/ripple keyframes, dark theme, responsive,
+  reduced-motion rules.
+* `app.js`: priority value badges, tilt/spotlight classes, the NDVI/EVI fetch +
+  card + seasonal SVG chart, plan timeline (no download-looking arrows),
+  vegetation failure/skeleton states.
+* `effects.js` (new, progressive): GSAP intro, ScrollTrigger reveals, stat
+  counters, pointer spotlight, hero glow, button ripples, VanillaTilt on result
+  cards, seed burst, chart clip animation, **tsParticles** cursor field
+  (`repulse` + `bubble` on hover, `push` on click, parallax), nav active
+  tracking. Everything is skipped under `prefers-reduced-motion` or when a
+  library is missing.
+* `globe.js`: `GLOBE._spaceDark = true` so the hero globe keeps its space
+  backdrop/labels in light mode; phone-sized globes now show ~13 larger cities
+  (min population ×4, font capped at 10.5 px) instead of 31 colliding labels.
+* Vegetation chart labels fixed: month-year endpoints (`Nov 25` … `Oct 26`)
+  instead of truncated day numbers; the “peak” label is dropped when it would
+  collide with an endpoint. Plan rows now use a connected vertical timeline
+  with a lime first-season disc; the odd down-arrow was removed.
+* Flat-map fallback fixed (found while testing without WebGL):
+  * `.mapbar .hint` never matched (the element itself is `.mapbar.hint`) so the
+    “Tap the map…” copy was never applied;
+  * “Satellite photo” now uses the complete **Blue Marble** base on the flat
+    map too (the daily mosaic’s swath gaps showed as black wedges);
+  * `map.js` tile helper accepts a layer argument; true-colour max zoom 8.
+
+### 12.5 Map-tile backend fixes (surfaced by the fallback test)
+
+* GIBS serves a **uniform black JPEG (~1.6 KB, HTTP 200)** for a date whose
+  product is not produced yet. The old probe accepted any 200, so at 05:54 the
+  hub cached a full day of black true-colour tiles. `gibs.py` now rejects
+  sub-5 KB true-colour probe/download tiles, falls back to the newest cached
+  day, and the stale 2026-11-13 cache was deleted + service restarted.
+* `server.py` called `gibs.warm_mosaic()`, which did not exist (the local
+  `warm_mosaic()` used unimported names and was dead code). Moved a working
+  `warm_mosaic()` into `gibs.py` and removed the dead copy.
+
+### 12.6 PDF — new section 7 on NDVI/EVI
+
+`docs/build_report.py`:
+
+* New **§7 “Vegetation indices from orbit: NDVI and EVI”** (the old §7–9 are
+  now §8–10): NDVI derivation + interpretation table; EVI formula with the
+  meaning of G/C1/C2/L and the MODIS two-band backup over bright targets;
+  MOD13Q1 product table; the seven-step hub pipeline; analysis definitions
+  (percentile/trend/peak); the live Cairo worked example; **why the indices are
+  context and not MCDM criteria** (double counting, target/temporal/spatial
+  mismatch); seven limitations specific to the panel.
+* Exec summary, pipeline Step 0, system table, API surface, validation
+  (43/43), limitations, references [16]–[21] (Huete 2002, Didan 2021, MODIS VI
+  User Guide, ORNL DAAC, Tucker 1979, Rouse 1974) and Appendix A updated.
+* Fixed the `table()` helper to wrap every cell in a `Paragraph`; the old
+  plain-string cells overflowed across columns (visible in the previous PDF).
+* Regenerated `docs/MCDM_Technical_Report.pdf` → **11 pages**, checked page by
+  page with `pdftoppm`.
+
+### 12.7 Verification actually run
+
+* `node --check app.js / globe.js / effects.js / map.js` — OK.
+* `./venv/bin/python -m tests.test_mcdm` — **43 passed, 0 failed**.
+* Headless Chromium via a small CDP driver (SwiftShader for WebGL):
+  * 1280 px light + dark, full page, with a real recommendation run:
+    hero/globe, steps, Potato result, NDVI/EVI card + chart, plan, others,
+    sources, footer; **0 console errors / 0 uncaught exceptions**.
+  * 390×844 mobile light full page: clean globe labels, stacked cards, chart.
+  * `prefers-reduced-motion: reduce` emulated: steps/cards visible, no
+    particles (canvas stays 300×150), no tilt/GSAP.
+  * `--disable-webgl`: flat-map fallback renders real Blue Marble imagery, the
+    hint says “Tap the map…”, no black panel.
+  * Live `/health`, `/api/vegetation`, GIBS tiles re-checked after the fix.
+* Note: full-page screenshots show the sticky header at the scroll position and
+  can hide the action button — a capture artefact, not a layout bug (computed
+  styles and element captures were used to confirm).
+
+### 12.8 Notes for the next agent
+
+* `tsParticles`/GSAP/VanillaTilt are loaded before `map.js`; `effects.js` is
+  last and exposes `window.LCRDA_EFFECTS.afterRender/animateVegetation/initTilt`.
+  `app.js` calls those after rendering results.
+* Vegetation is intentionally outside `c_ij`; do not add it to the MCDM matrix
+  without removing the double counting and documenting the change.
+* The ORNL DAAC call is slow on a cold cache (~10–11 s); the browser aborts at
+  30 s and shows the offline fallback. The 7-day cache hides this after the
+  first run.
+* Chart helpers: `fmtIsoDate`, `monthYear`, `dayMonth`, `smoothPath`; labels
+  are placed with an explicit anchor and the peak label is conditional.
+* The `?theme=` parameter is a deep-link only; the toggle still persists to
+  `localStorage["lcrda-theme"]`.
+* Service: `sudo -n systemctl restart lcrda`; headless Chromium at
+  `/usr/bin/chromium`; screenshots need SwiftShader (`--use-gl=swiftshader
+  --enable-unsafe-swiftshader`) or WebGL hangs.

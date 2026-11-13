@@ -16,9 +16,8 @@ const MAP = {
 };
 
 const LAYERS = {
-  truecolor:   { ext: "jpg", maxz: 9, label: "Satellite photo",
-                 note: "Today's true-colour NASA satellite picture of the land (MODIS Terra).",
-                 globeNote: "NASA Blue Marble Next Generation — a complete, cloud-free natural-colour portrait of the land, so the globe has no daily gaps." },
+  truecolor:   { ext: "jpg", maxz: 8, label: "Satellite photo",
+                 note: "NASA Blue Marble Next Generation — a complete, cloud-free natural-colour portrait of the land, with no daily gaps." },
   soilmoisture:{ ext: "png", maxz: 6, label: "Soil moisture",
                  note: "How wet the top soil is, from the SMAP satellite. Blue = wet, brown = dry." },
   temp:        { ext: "png", maxz: 7, label: "Land temperature",
@@ -108,14 +107,15 @@ function clampView() {
   else if (cyPx + H / 2 > worldPx(z)) MAP.cy = yToLat(worldPx(z) - H / 2, z);
 }
 
-function tileImg(z, x, y) {
-  const key = `${MAP.layer}/${z}/${x}/${y}`;
+function tileImg(z, x, y, layer = MAP.layer) {
+  const key = `${layer}/${z}/${x}/${y}`;
   let img = MAP.tiles.get(key);
   if (img !== undefined) return img;
   img = new Image();
   img.onload = () => mapDraw();
   img.onerror = () => { MAP.tiles.set(key, false); };
-  img.src = `/api/maptile/${MAP.layer}/${z}/${x}/${y}.${LAYERS[MAP.layer].ext}`;
+  img.src = `/api/maptile/${layer}/${z}/${x}/${y}.${
+    layer === "bluemarble" ? "jpg" : LAYERS[layer].ext}`;
   MAP.tiles.set(key, img);
   return img;
 }
@@ -139,7 +139,11 @@ function mapDraw() {
   const y1 = Math.min(2 ** z - 1, Math.floor((cyPx + H / 2) / 256));
   for (let tx = Math.max(0, x0); tx <= Math.min(2 ** z - 1, x1); tx++) {
     for (let ty = y0; ty <= y1; ty++) {
-      const img = tileImg(z, tx, ty);
+      /* "Satellite photo" is the complete Blue Marble base, exactly as on
+         the 3D globe: the daily true-colour mosaic is riddled with swath
+         gaps and polar-night wedges that look like rendering faults. */
+      const src = MAP.layer === "truecolor" ? "bluemarble" : MAP.layer;
+      const img = tileImg(z, tx, ty, src);
       if (img && img.complete && img.naturalWidth)
         ctx.drawImage(img, tx * 256 - cxPx + W / 2, ty * 256 - cyPx + H / 2);
     }

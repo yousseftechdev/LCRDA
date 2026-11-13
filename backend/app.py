@@ -40,6 +40,7 @@ from .engine import mcdm
 from .data import crops as cropdb
 from .data import power as powerdb
 from .data import soilgrids as sgrids
+from .data import vegetation as veg
 from . import storage
 
 
@@ -73,6 +74,28 @@ def get_soil(lat: float, lon: float, force_refresh: bool = False) -> dict:
     except Exception as e:            # offline: keep going with unknown soil
         payload = {"error": f"offline/failed: {e}"}
     storage.put("soilgrids", lat, lon, payload)
+    return payload
+
+
+# -------------------------------------------------- NDVI / EVI -----------
+
+def get_vegetation(lat: float, lon: float, force_refresh: bool = False
+                   ) -> dict:
+    """Last 12 months of MODIS MOD13Q1 NDVI+EVI at 250 m, for the satellite
+    greenness panel. Cached 7 days (16-day composites do not change faster);
+    an error payload is retried after 1 h. Never raises: the recommendation
+    must keep working offline without vegetation context."""
+    cached = None if force_refresh else storage.get(
+        "mod13q1_veg", lat, lon, max_age_h=24 * 7)
+    if cached and "error" not in cached["payload"]:
+        return cached["payload"]
+    if cached and "error" in cached["payload"] and cached["age_hours"] < 1:
+        return cached["payload"]
+    try:
+        payload = veg.fetch(lat, lon)
+    except Exception as e:              # offline / service unavailable
+        payload = {"error": f"offline/failed: {e}"}
+    storage.put("mod13q1_veg", lat, lon, payload)
     return payload
 
 

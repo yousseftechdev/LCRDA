@@ -4,12 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0A1712">
 <title>Live Crop Rotation Decision Aid</title>
 <script>
 /* theme before first paint: saved choice, else system preference */
 (function () {
+  /* ?theme=light|dark wins (handy for sharing a specific view), then the
+     saved choice, then the device preference */
   var t = null;
-  try { t = localStorage.getItem("lcrda-theme"); } catch (e) {}
+  try { t = new URLSearchParams(location.search).get("theme"); } catch (e) {}
+  if (t !== "dark" && t !== "light") {
+    try { t = localStorage.getItem("lcrda-theme"); } catch (e) {}
+  }
   if (t !== "dark" && t !== "light")
     t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   document.documentElement.dataset.theme = t;
@@ -19,66 +25,114 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<a class="skiplink" href="#step2">Skip to the questions</a>
+
 <header class="topbar">
-  <a class="brand" href="/">
-    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><use href="favicon.svg#leaf"></use></svg>
-    <span class="brand-name">Live Crop Rotation<br>Decision Aid</span>
-  </a>
-  <p class="tagline">Advice for what to plant next — built on NASA satellite
-  data and FAO crop science. Works without internet.</p>
-  <button id="themeToggle" class="theme-toggle" type="button"
-    aria-label="Switch between light and dark mode">
-    <svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.3 14.2A8.6 8.6 0 0 1 9.8 3.7a8.6 8.6 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-    <svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-  </button>
+  <div class="topbar-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><use href="favicon.svg#leaf"></use></svg></span>
+      <span class="brand-name">Live Crop Rotation <span>Decision Aid</span></span>
+    </a>
+    <nav class="topnav" aria-label="Sections">
+      <a href="#step1">Field</a>
+      <a href="#step2">Crops</a>
+      <a href="#step3">Priorities</a>
+      <a href="#step4">Last season</a>
+    </nav>
+    <button id="themeToggle" class="theme-toggle" type="button"
+      aria-label="Switch between light and dark mode">
+      <svg class="ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.3 14.2A8.6 8.6 0 0 1 9.8 3.7a8.6 8.6 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <svg class="ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.4M12 19.1v2.4M2.5 12h2.4M19.1 12h2.4M5.2 5.2l1.7 1.7M17.1 17.1l1.7 1.7M18.8 5.2l-1.7 1.7M6.9 17.1l-1.7 1.7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </button>
+  </div>
 </header>
 
-<main>
+<main id="main">
 
-  <section class="step" id="step1">
-    <h2><span class="stepnum">1</span> Where is your field?</h2>
-    <p class="hint">We look up satellite weather for this spot and the soil map
-    for it. Tap the globe to place your field, or type the coordinates —
-    one set of numbers covers about 50 km around it.</p>
-    <div class="fields">
-      <label>Latitude <input id="lat" type="number" step="0.0001" inputmode="decimal" value="30.0444" autocomplete="off"></label>
-      <label>Longitude <input id="lon" type="number" step="0.0001" inputmode="decimal" value="31.2357" autocomplete="off"></label>
-    </div>
-    <div id="mapPanel" class="mappanel">
-      <div id="layerChips" class="chips" role="group" aria-label="Map layer"></div>
-      <p id="layerNote" class="hint"></p>
-      <div class="mapbar">
-        <span class="hint">Tap the globe to drop the pin, drag to spin it,
-        pinch or use + to zoom.</span>
-        <span class="mapzoom">
-          <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
-          <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
-        </span>
+  <!-- ============ STEP 1 / HERO: the field, on a live globe ============ -->
+  <section class="hero" id="step1">
+    <canvas id="heroParticles" class="hero-particles" aria-hidden="true"></canvas>
+    <div id="heroGlow" class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-lines" aria-hidden="true"></div>
+
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <p class="kicker"><span class="pulse-dot" aria-hidden="true"></span>
+          NASA Earth data, on your farm network</p>
+        <h1>Grow the next season with NASA eyes on your field.</h1>
+        <p class="lede">Tap your field on the globe. We read a year of NASA
+        satellite weather, the world soil map, and FAO crop science, then tell
+        you what to plant next in plain words.</p>
+
+        <div class="fieldform">
+          <div class="fields">
+            <label>Latitude
+              <input id="lat" type="number" step="0.0001" inputmode="decimal" value="30.0444" autocomplete="off"></label>
+            <label>Longitude
+              <input id="lon" type="number" step="0.0001" inputmode="decimal" value="31.2357" autocomplete="off"></label>
+          </div>
+          <div class="datarow">
+            <button id="btnFetch" class="ghost" type="button">Check this field's satellite data</button>
+            <span id="dataStatus" class="statusline" role="status"></span>
+          </div>
+        </div>
+
+        <dl class="hero-stats" aria-label="What the hub uses">
+          <div><dt><span class="count" data-count="366">366</span></dt><dd>days of satellite weather for your spot</dd></div>
+          <div><dt><span class="count" data-count="2568">2,568</span></dt><dd>crop species compared with FAO crop science</dd></div>
+          <div><dt>24 h</dt><dd>the hub refreshes itself, unattended</dd></div>
+          <div><dt>Offline</dt><dd>advice keeps working without internet</dd></div>
+        </dl>
+
+        <a class="scroll-cue" href="#step2">
+          <span>Next: choose your crops</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v14M6 12l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
       </div>
-      <div class="mapcanvaswrap">
-        <canvas id="spaceCanvas" aria-hidden="true"></canvas>
-        <canvas id="globeCanvas" aria-label="3D globe for picking your field location"></canvas>
-        <canvas id="globeOverlay" aria-hidden="true"></canvas>
-        <canvas id="mapCanvas" aria-label="Satellite map for picking your field location"></canvas>
+
+      <div class="hero-globe">
+        <div class="hero-orbit" aria-hidden="true"></div>
+        <div id="mapPanel" class="mappanel">
+          <div class="maphead">
+            <span class="map-eyebrow"><span class="pulse-dot" aria-hidden="true"></span> Live Earth view</span>
+            <span class="mapstep">Step 1</span>
+          </div>
+          <div id="layerChips" class="chips" role="group" aria-label="Map layer"></div>
+          <p id="layerNote" class="hint layer-note"></p>
+          <div class="mapcanvaswrap">
+            <canvas id="spaceCanvas" aria-hidden="true"></canvas>
+            <canvas id="globeCanvas" aria-label="3D globe for picking your field location"></canvas>
+            <canvas id="globeOverlay" aria-hidden="true"></canvas>
+            <canvas id="mapCanvas" aria-label="Satellite map for picking your field location"></canvas>
+          </div>
+          <div class="mapfoot">
+            <span id="mapCoord" class="statusline">No spot chosen yet</span>
+            <span class="mapzoom">
+              <button id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
+              <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+            </span>
+            <button id="btnUseSpot" class="use-spot" type="button">Use this field</button>
+          </div>
+          <p class="mapbar hint">Tap the globe to drop the pin, drag to spin it,
+          pinch or use + to zoom.</p>
+          <p class="hint quiet small mapcredit">NASA GIBS / Worldview imagery,
+          stored on this hub daily so the globe works offline too.</p>
+        </div>
       </div>
-      <div class="mapfoot">
-        <span id="mapCoord" class="statusline">No spot chosen yet</span>
-        <button id="btnUseSpot" class="use-spot" type="button">Use this spot</button>
-      </div>
-      <p class="hint quiet small">Imagery: NASA GIBS / Worldview — today's
-      pictures, stored on this hub daily so the map works offline too.</p>
-    </div>
-    <div class="datarow">
-      <button id="btnFetch" class="ghost" type="button">Check the satellite data</button>
-      <span id="dataStatus" class="statusline" role="status"></span>
     </div>
   </section>
 
-  <section class="step" id="step2">
-    <h2><span class="stepnum">2</span> Which crops are you thinking about?</h2>
-    <p class="hint">Search by name and tap the ones you want compared.
-    Leave empty and we use 21 of the most common food crops.</p>
-    <input id="cropSearch" type="search" placeholder="Try wheat, tomato, bean…" autocomplete="off">
+  <!-- ============ STEP 2: crops ============ -->
+  <section class="step spotlight" id="step2">
+    <div class="step-head">
+      <h2><span class="stepnum">2</span> Which crops are you thinking about?</h2>
+      <p class="hint">Search by name and tap the ones you want compared.
+      Leave empty and we use 21 of the most common food crops.</p>
+    </div>
+    <div class="searchwrap">
+      <svg class="searchicon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.2 15.2 21 21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <input id="cropSearch" type="search" placeholder="Try wheat, tomato, bean…" autocomplete="off">
+    </div>
     <div id="cropResults" class="chips" aria-live="polite"></div>
     <div id="selCount" class="hint quiet">Nothing selected yet — using the common crops</div>
 
@@ -90,11 +144,16 @@
     </div>
   </section>
 
-  <section class="step" id="step3">
-    <h2><span class="stepnum">3</span> What matters most to you?</h2>
+  <!-- ============ STEP 3: priorities ============ -->
+  <section class="step spotlight" id="step3">
+    <div class="step-head">
+      <h2><span class="stepnum">3</span> What matters most to you?</h2>
+      <p class="hint">Move each dial to where it belongs for your farm.
+      Nothing is hidden: every crop stays in the comparison.</p>
+    </div>
     <div id="sliders"></div>
 
-    <div class="subblock">
+    <div class="subblock waterblock">
       <h3>Water for the crop</h3>
       <div class="segmented" role="radiogroup" aria-label="Water supply">
         <button type="button" class="seg on" data-water="rain">Rain only</button>
@@ -113,25 +172,32 @@
     </div>
   </section>
 
-  <section class="step step-last" id="step4">
-    <h2><span class="stepnum">4</span> What grew here last season?</h2>
-    <p class="hint">This matters: some crops leave plant food in the soil for
-    the next one, and repeating the same crop family invites pests.</p>
+  <!-- ============ STEP 4: last season ============ -->
+  <section class="step spotlight step-last" id="step4">
+    <div class="step-head">
+      <h2><span class="stepnum">4</span> What grew here last season?</h2>
+      <p class="hint">This matters: some crops leave plant food in the soil for
+      the next one, and repeating the same crop family invites pests.</p>
+    </div>
     <label class="selectwrap">Last season's crop
       <select id="prevCrop"><option value="">Nothing / new field</option></select>
     </label>
   </section>
 
   <div class="actionbar">
-    <button id="btnRun" class="primary" type="button">Get my planting advice</button>
+    <button id="btnRun" class="primary magnetic" type="button">
+      <span>Get my planting advice</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
   </div>
   <div id="err" class="error" role="alert"></div>
 
   <section id="results" class="results hidden" aria-live="polite">
     <div id="summary"></div>
+    <div id="vegetation"></div>
     <div id="plan"></div>
     <div id="others"></div>
-    <details class="sources">
+    <details class="sources spotlight">
       <summary>Where this advice comes from</summary>
       <ul>
         <li><b>Weather:</b> daily satellite records for your exact spot from
@@ -144,9 +210,15 @@
         <a href="https://visibleearth.nasa.gov/collection/1484/blue-marble" target="_blank" rel="noopener">NASA Blue Marble Next Generation</a>
         as its always-complete base map; world outlines come from Natural
         Earth (public domain) as the offline fallback.</li>
+        <li><b>Vegetation:</b> NDVI and EVI from NASA's MODIS MOD13Q1 product
+        (250 m, 16-day composites, via the ORNL DAAC), plus the VIIRS 8-day
+        NDVI greenery layer on the globe. NDVI responds to living green
+        biomass; EVI corrects for soil background and haze. They describe
+        how green your field is right now — they are context for you, not a
+        score that decides the crop.</li>
         <li><b>NASA missions behind the numbers:</b> SMAP (root-zone soil
-        moisture), MODIS Terra (land-surface temperature, true-colour),
-        VIIRS (NDVI greenery), GPM IMERG (rainfall rate), and POWER
+        moisture), MODIS Terra (land-surface temperature, true-colour,
+        NDVI/EVI), VIIRS (NDVI greenery), GPM IMERG (rainfall rate), and POWER
         (weather and climate records) — the Earth-observation stack used by
         the
         <a href="https://www.spaceappschallenge.org/2026/challenges/adapting-farms-with-nasa-data/" target="_blank" rel="noopener">2026 NASA Space Apps “Field Shift” challenge</a>.</li>
@@ -171,14 +243,22 @@
 </main>
 
 <footer class="sitefoot">
-  Data: NASA POWER satellite weather, ISRIC SoilGrids soil maps, and FAO
-  crop science (EcoCrop, FAO-56, AquaCrop). Ranking method: multi-criteria
-  decision making (Gunawan et al. 2024).
+  <div class="foot-brand"><svg viewBox="0 0 32 32" aria-hidden="true"><use href="favicon.svg#leaf"></use></svg>
+  <span>Live Crop Rotation Decision Aid</span></div>
+  <p>Data: NASA POWER satellite weather, NASA GIBS/Worldview imagery, NASA
+  MODIS NDVI/EVI, ISRIC SoilGrids soil maps, and FAO crop science (EcoCrop,
+  FAO-56, AquaCrop). Ranking method: multi-criteria decision making
+  (Gunawan et al. 2024). Built for a Raspberry Pi on a farm network.</p>
 </footer>
 
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/ScrollTrigger.min.js"></script>
+<script src="vendor/vanilla-tilt.min.js"></script>
+<script src="vendor/tsparticles.slim.bundle.min.js"></script>
 <script src="map.js"></script>
 <script src="vendor/three.min.js"></script>
 <script src="globe.js"></script>
 <script src="app.js"></script>
+<script src="effects.js"></script>
 </body>
 </html>
