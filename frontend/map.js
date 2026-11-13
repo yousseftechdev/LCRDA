@@ -17,7 +17,8 @@ const MAP = {
 
 const LAYERS = {
   truecolor:   { ext: "jpg", maxz: 9, label: "Satellite photo",
-                 note: "Today's true-colour NASA satellite picture of the land (MODIS Terra)." },
+                 note: "Today's true-colour NASA satellite picture of the land (MODIS Terra).",
+                 globeNote: "NASA Blue Marble Next Generation — a complete, cloud-free natural-colour portrait of the land, so the globe has no daily gaps." },
   soilmoisture:{ ext: "png", maxz: 6, label: "Soil moisture",
                  note: "How wet the top soil is, from the SMAP satellite. Blue = wet, brown = dry." },
   temp:        { ext: "png", maxz: 7, label: "Land temperature",

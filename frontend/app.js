@@ -234,7 +234,9 @@ function buildChips() {
 function updateLayerUI(key) {
   document.querySelectorAll("#layerChips .chip").forEach((c) =>
     c.setAttribute("aria-pressed", c.dataset.layer === key ? "true" : "false"));
-  document.getElementById("layerNote").textContent = LAYERS[key].note;
+  const cfg = LAYERS[key];
+  const note = PICKER === GLOBE && cfg.globeNote ? cfg.globeNote : cfg.note;
+  document.getElementById("layerNote").textContent = note;
 }
 $("btnMap").addEventListener("click", () => {
   const p = $("mapPanel");

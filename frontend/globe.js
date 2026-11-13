@@ -170,24 +170,19 @@ GLOBE.init = function () {
   return true;
 };
 
-/* ---------- texture: mercator z3 mosaic -> equirectangular ---------- */
-/* A 16x16 thumbnail of a tile; truecolour tiles where the satellite saw
-   nothing (polar night, swath gaps) are pure black -> skip them so the
-   Blue Marble base map underneath shows through (no black holes). */
-function tileHasContent(img) {
-  const t = document.createElement("canvas");
-  t.width = t.height = 16;
-  const x = t.getContext("2d");
-  x.drawImage(img, 0, 0, 16, 16);
-  const d = x.getImageData(0, 0, 16, 16).data;
-  let sum = 0;
-  for (let i = 0; i < d.length; i += 4)
-    sum += 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-  return sum / 256 > 13;
-}
+/* ---------- texture: mercator z3 mosaic -> equirectangular ----------
+   Two canvases per layer: a COMPLETE static NASA Blue Marble base map
+   (64 tiles, cached by the hub forever) and an optional data overlay
+   (today's soil moisture / temperature / greenery / rain, PNG with
+   transparent no-data). The globe always has a full, hole-free surface;
+   the data layer simply paints over it where the satellite has data.
+   "Satellite photo" is the Blue Marble itself -- complete, cloud-free
+   and identical every day, so it never shows the swath-gap wedges and
+   polar-night black patches that made the daily truecolour mosaic look
+   broken on a sphere. */
 
-/* tile sources for textures (backend proxy layers; includes the
-   static Blue Marble base, which is NOT a display layer) */
+/* tile sources for textures (backend proxy layers; the static Blue
+   Marble base is not a display layer) */
 const TILE_SRC = {
   truecolor: { ext: "jpg" }, soilmoisture: { ext: "png" },
   temp: { ext: "png" }, ndvi: { ext: "png" }, rain: { ext: "png" },
@@ -198,349 +193,47 @@ function globeStartTexture(layer) {
   const Z = 3, N = 8, T = 256, MW = N * T;          // 2048
   let cache = GLOBE._texCache[layer];
   if (!cache) {
-    const merc = document.createElement("canvas");
-    merc.width = merc.height = MW;
+    const base = document.createElement("canvas");  // Blue Marble (complete)
+    base.width = base.height = MW;
+    const data = document.createElement("canvas");  // data overlay (transparent)
+    data.width = data.height = MW;
     const eq = document.createElement("canvas");
     eq.width = MW; eq.height = MW / 2;              // 2048 x 1024
     cache = GLOBE._texCache[layer] = {
-      merc, eq, ctx: merc.getContext("2d"), eqCtx: eq.getContext("2d"),
+      base, data, eq,
+      baseCtx: base.getContext("2d"), ctx: data.getContext("2d"),
+      eqCtx: eq.getContext("2d"),
       pending: 0, done: false, uploaded: 0, failed: [],
-      bases: {},            // truecolour only: Blue Marble tiles by "tx_ty"
-      waiting: [],          // truecolour tiles whose base tile is not here yet
-      raw: null, rawCtx: null,          // truecolour only: unhealed mosaic
-      mask: null,                       // truecolour only: 1 = gap pixel
-      bmMos: null, bmMosCtx: null,      // truecolour only: base-map mosaic
     };
-    cache.ctx.fillStyle = "#d7e3ea";
-    cache.ctx.fillRect(0, 0, MW, MW);
+    cache.baseCtx.fillStyle = "#d7e3ea";            // offline: pale ocean-ish
+    cache.baseCtx.fillRect(0, 0, MW, MW);
 
-    /* today's true-colour imagery has black polar-night / swath holes
-       INSIDE tiles, so tiles are healed per-pixel from the static Blue
-       Marble base (data layers just skip empty tiles and get the
-       Natural Earth outlines where tiles never arrive) */
-    const withBase = layer === "truecolor";
-    let rawCtx = null, bmMosCtx = null;
-    if (withBase) {
-      const raw = document.createElement("canvas");
-      raw.width = raw.height = MW;
-      cache.raw = raw;
-      cache.rawCtx = rawCtx = raw.getContext("2d", { willReadFrequently: true });
-      cache.mask = new Uint8Array(MW * MW);
-      const bmMos = document.createElement("canvas");
-      bmMos.width = bmMos.height = MW;
-      cache.bmMos = bmMos;
-      cache.bmMosCtx = bmMosCtx = bmMos.getContext("2d");
-    }
-    const baseReady = (tx, ty) => {
-      const b = cache.bases[tx + "_" + ty];
-      return b && b.naturalWidth;
-    };
-    const drawHealed = (tx, ty, img) => {
-      const m = gapMaskOf(img);
-      rawCtx.drawImage(img, tx * T, ty * T);
-      blitMask(cache.mask, m, tx * T, ty * T, MW);
-      cache.ctx.drawImage(healTile(img, cache.bases[tx + "_" + ty], m),
-                          tx * T, ty * T);
-      globeScheduleReproject(layer);
-    };
-    const flushWaiting = (tx, ty) => {
-      cache.waiting = cache.waiting.filter(([wx, wy, img]) => {
-        if (wx === tx && wy === ty && baseReady(tx, ty)) {
-          drawHealed(wx, wy, img);
-          return false;
-        }
-        return true;
-      });
-    };
-    const addBase = (tx, ty) => {
+    const finish = () => { if (cache.pending === 0) globeFinishTexture(layer); };
+    const addTile = (srcLayer, tx, ty) => {
+      cache.pending++;
       const img = new Image();
       img.onload = () => {
-        cache.bases[tx + "_" + ty] = img;
-        if (bmMosCtx) bmMosCtx.drawImage(img, tx * T, ty * T);
-        /* a layer tile that never arrived -> show the base map there */
-        if (cache.failed.some(([fx, fy]) => fx === tx && fy === ty)) {
-          cache.ctx.drawImage(img, tx * T, ty * T);
-          if (rawCtx) rawCtx.drawImage(img, tx * T, ty * T);
-          globeScheduleReproject(layer);
-        }
-        flushWaiting(tx, ty);
-        if (--cache.pending === 0) globeFinishTexture(layer);
+        const ctx = srcLayer === "bluemarble" ? cache.baseCtx : cache.ctx;
+        ctx.drawImage(img, tx * T, ty * T);
+        if (--cache.pending === 0) finish();
+        else globeScheduleReproject(layer);
       };
       img.onerror = () => {
-        if (--cache.pending === 0) globeFinishTexture(layer);
+        cache.failed.push([srcLayer, tx, ty]);
+        if (--cache.pending === 0) finish();
       };
-      img.src = `/api/maptile/bluemarble/${Z}/${tx}/${ty}.jpg`;
+      img.src = `/api/maptile/${srcLayer}/${Z}/${tx}/${ty}.${TILE_SRC[srcLayer].ext}`;
     };
-    const addTile = (tx, ty) => {
-      const img = new Image();
-      img.onload = () => {
-        if (withBase) {
-          if (baseReady(tx, ty)) drawHealed(tx, ty, img);
-          else cache.waiting.push([tx, ty, img]);
-        } else if (tileHasContent(img)) {
-          cache.ctx.drawImage(img, tx * T, ty * T);
-          globeScheduleReproject(layer);
-        } else {
-          cache.failed.push([tx, ty]);
-        }
-        if (--cache.pending === 0) globeFinishTexture(layer);
-      };
-      img.onerror = () => {
-        cache.failed.push([tx, ty]);
-        const b = withBase && cache.bases[tx + "_" + ty];
-        if (b) {
-          cache.ctx.drawImage(b, tx * T, ty * T);
-          if (rawCtx) {
-            rawCtx.drawImage(b, tx * T, ty * T);
-            bmMosCtx.drawImage(b, tx * T, ty * T);
-          }
-          globeScheduleReproject(layer);
-        }
-        if (--cache.pending === 0) globeFinishTexture(layer);
-      };
-      img.src = `/api/maptile/${layer}/${Z}/${tx}/${ty}.${TILE_SRC[layer].ext}`;
-    };
-    if (withBase)
-      for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++) {
-        cache.pending++; addBase(tx, ty);
-      }
-    for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++) {
-      cache.pending++; addTile(tx, ty);
-    }
+    for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++)
+      addTile("bluemarble", tx, ty);
+    /* "Satellite photo" shows the Blue Marble itself; the parameter
+       layers paint their data on top of it */
+    if (layer !== "truecolor")
+      for (let ty = 0; ty < N; ty++) for (let tx = 0; tx < N; tx++)
+        addTile(layer, tx, ty);
     setTimeout(() => { if (!cache.done) globeFinishTexture(layer); }, 30000);
   }
   if (cache.done) globeUploadTexture(layer);
-}
-
-/* the gap rule, shared by the per-tile and whole-mosaic healing passes:
-   gap pixels are DARK and GREY (R=G=B, no chroma; dark ocean is
-   blue-tinted, so a darkness+greyness test leaves water alone) */
-function gapMaskOf(img) {
-  const S = 256;
-  const cc = document.createElement("canvas");
-  cc.width = cc.height = S;
-  const x = cc.getContext("2d", { willReadFrequently: true });
-  x.drawImage(img, 0, 0, S, S);
-  const d = x.getImageData(0, 0, S, S).data;
-  const m = new Uint8Array(S * S);
-  for (let q = 0; q < m.length; q++) {
-    const i = q * 4;
-    const r = d[i], g = d[i + 1], b = d[i + 2];
-    const sum = r + g + b;
-    m[q] = (sum < 36 || (sum < 90 && (Math.max(r, g, b) - Math.min(r, g, b)) < 12)) ? 1 : 0;
-  }
-  return m;
-}
-
-/* copy a 256x256 tile mask into the 2048x2048 mosaic mask */
-function blitMask(dst, tile, ox, oy, mw) {
-  for (let y = 0; y < 256; y++)
-    dst.set(tile.subarray(y << 8, (y << 8) + 256), ox + (oy + y) * mw);
-}
-
-/* heal one true-colour tile for the progressive display: each gap run is
-   filled by interpolating between the nearest real satellite pixels on
-   its left and right in the same row -- the gaps are diagonal swath
-   edges, so a horizontal blend disappears into the surrounding imagery.
-   Runs wider than MAXRUN are true polar night, not a swath slash: they
-   get the Blue Marble base instead of a smeared lerp. (MAXRUN itself is
-   declared just above healMosaic, which uses the same constant.) */
-function healTile(img, base, preMask) {
-  const S = 256;
-  const c = document.createElement("canvas");
-  c.width = c.height = S;
-  const x = c.getContext("2d", { willReadFrequently: true });
-  x.drawImage(img, 0, 0, S, S);
-  const b = document.createElement("canvas");
-  b.width = b.height = S;
-  const bx = b.getContext("2d", { willReadFrequently: true });
-  bx.drawImage(base, 0, 0, S, S);
-  const d = x.getImageData(0, 0, S, S);
-  const p = d.data;
-  const bd = bx.getImageData(0, 0, S, S).data;
-  const gap = preMask || gapMaskOf(img);
-  for (let y = 0; y < S; y++) {
-    const row = y * S;
-    for (let t = row; t < row + S; t++) {
-      if (!gap[t]) continue;
-      let e = t;
-      while (e < row + S && gap[e]) e++;
-      const wide = e - t > MAXRUN;                   // polar night, not a slash
-      const hasL = t > row, hasR = e < row + S;
-      for (let u = t; u < e; u++) {
-        const i = u * 4;
-        if (!wide && hasL && hasR) {
-          const a = (u - t + 1) / (e - t + 1);      // 0 at left edge
-          const iL = (t - 1) * 4, iR = e * 4;
-          for (let k = 0; k < 3; k++)
-            p[i + k] = Math.round(p[iL + k] * (1 - a) + p[iR + k] * a);
-        } else if (!wide) {
-          const src = hasL ? (t - 1) * 4 : (hasR ? e * 4 : -1);
-          if (src >= 0) {
-            p[i] = p[src]; p[i + 1] = p[src + 1]; p[i + 2] = p[src + 2];
-          } else {                                   // whole row is gap
-            p[i] = bd[i]; p[i + 1] = bd[i + 1]; p[i + 2] = bd[i + 2];
-          }
-        } else {                                     // wide run -> base map
-          p[i] = bd[i]; p[i + 1] = bd[i + 1]; p[i + 2] = bd[i + 2];
-        }
-        p[i + 3] = 255;
-      }
-      t = e - 1;                                     // skip the filled run
-    }
-  }
-  x.putImageData(d, 0, 0);
-  return c;
-}
-
-/* final seam-free healing pass over the whole mosaic: the per-tile pass
-   cannot connect gap runs that continue into the neighbouring tile,
-   which leaves streaks at tile seams; once every tile is in, this pass
-   re-heals from the raw mosaic with a whole-world view.
-   Narrow runs (up to MAXRUN): horizontal lerp between the nearest real
-   pixels -- across a diagonal swath band that crossing is short.
-   Wide runs (polar night, broad swath wedges): the Blue Marble base
-   rescaled per row so its terrain texture keeps detail but its
-   brightness matches the imagery flanking the gap.
-   The mask is first dilated so JPEG halo greys around every gap are
-   refilled too, and the filled region is then softened with a local
-   average, which removes the comb banding that straight ramps produce
-   against grainy satellite imagery. */
-const MAXRUN = 32;
-
-/* grow a 1-bit mask by r pixels horizontally then vertically */
-function dilateMask(src, W, r) {
-  const tmp = new Uint8Array(W * W), out = new Uint8Array(W * W);
-  for (let y = 0; y < W; y++) {
-    const row = y * W;
-    for (let x = 0; x < W; x++) {
-      if (!src[row + x]) continue;
-      const a = Math.max(0, x - r), b = Math.min(W - 1, x + r);
-      for (let u = a; u <= b; u++) tmp[row + u] = 1;
-    }
-  }
-  for (let y = 0; y < W; y++) {
-    const row = y * W;
-    for (let x = 0; x < W; x++) {
-      if (!tmp[row + x]) continue;
-      const a = Math.max(0, y - r), b = Math.min(W - 1, y + r);
-      for (let v = a; v <= b; v++) out[v * W + x] = 1;
-    }
-  }
-  return out;
-}
-
-function healMosaic(c) {
-  const MW = c.merc.width;
-  const mask = dilateMask(c.mask, MW, 2);
-  const raw = c.rawCtx.getImageData(0, 0, MW, MW);
-  const p = raw.data;
-  const bm = c.bmMosCtx.getImageData(0, 0, MW, MW).data;
-  for (let y = 0; y < MW; y++) {
-    const row = y * MW;
-    for (let t = row; t < row + MW; t++) {
-      if (!mask[t]) continue;
-      let e = t;
-      while (e < row + MW && mask[e]) e++;
-      const w = e - t;
-      const iL = (t - 1) * 4, iR = e * 4;
-      const hasL = t > row, hasR = e < row + MW;
-      if (w > MAXRUN) {
-        /* wide run: Blue Marble, gain-matched to the flanking imagery.
-           The target is the mean of several pixels on each side -- a
-           single flanking pixel carries JPEG halo noise, which striped
-           the fill. */
-        let gain = null;
-        if (hasL || hasR) {
-          const tgt = [0, 0, 0], ref = [0, 0, 0];
-          let nt = 0;
-          if (hasL && hasR) {
-            for (let s = 1; s <= 8; s++) {
-              const a = (t - 1 - s) * 4, b = (e + s) * 4;
-              if (t - 1 - s < row || e + s >= row + MW) break;
-              for (let k = 0; k < 3; k++) tgt[k] += p[a + k] + p[b + k];
-              nt += 2;
-            }
-          } else {
-            const side = hasL ? -1 : 1;
-            for (let s = 1; s <= 8; s++) {
-              const q = hasL ? t - 1 - s : e + s;
-              if (q < row || q >= row + MW) break;
-              for (let k = 0; k < 3; k++) tgt[k] += p[q * 4 + k];
-              nt++;
-            }
-          }
-          if (nt) {
-            for (let k = 0; k < 3; k++) tgt[k] /= nt;
-            for (let u = t; u < e; u++)
-              for (let k = 0; k < 3; k++) ref[k] += bm[u * 4 + k];
-            gain = [0, 0, 0];
-            for (let k = 0; k < 3; k++)
-              gain[k] = Math.max(0.4, Math.min(2.5,
-                tgt[k] / Math.max(8, ref[k] / w)));
-          }
-        }
-        for (let u = t; u < e; u++) {
-          const i = u * 4;
-          for (let k = 0; k < 3; k++)
-            p[i + k] = gain ? Math.min(255, Math.round(bm[i + k] * gain[k]))
-                            : bm[i + k];
-          p[i + 3] = 255;
-        }
-      } else if (hasL && hasR) {
-        /* narrow run: horizontal lerp across the gap */
-        for (let u = t; u < e; u++) {
-          const i = u * 4;
-          const a = (u - t + 1) / w;           // 0 at left edge
-          for (let k = 0; k < 3; k++)
-            p[i + k] = Math.round(p[iL + k] * (1 - a) + p[iR + k] * a);
-          p[i + 3] = 255;
-        }
-      } else {
-        /* narrow run touching the row edge: copy the one valid side */
-        const src = hasL ? iL : (hasR ? iR : -1);
-        for (let u = t; u < e; u++) {
-          const i = u * 4;
-          if (src >= 0) {
-            p[i] = p[src]; p[i + 1] = p[src + 1]; p[i + 2] = p[src + 2];
-          } else {
-            p[i] = bm[i]; p[i + 1] = bm[i + 1]; p[i + 2] = bm[i + 2];
-          }
-          p[i + 3] = 255;
-        }
-      }
-      t = e - 1;
-    }
-  }
-  /* soften the filled region: a local average blends each synthetic
-     pixel with its neighbourhood, which removes the comb banding that
-     straight ramps produce against grainy satellite imagery */
-  const hp = new Uint8ClampedArray(p);
-  for (let y = 0; y < MW; y++) {
-    const row = y * MW;
-    for (let x = 0; x < MW; x++) {
-      const q = row + x;
-      if (!mask[q]) continue;
-      let s0 = 0, s1 = 0, s2 = 0, n = 0;
-      for (let dy = -2; dy <= 2; dy++) {
-        const yy = y + dy;
-        if (yy < 0 || yy >= MW) continue;
-        const yrow = yy * MW + x;
-        for (let dx = -2; dx <= 2; dx++) {
-          const xx = x + dx;
-          if (xx < 0 || xx >= MW) continue;
-          const i = (yrow + dx) * 4;
-          s0 += hp[i]; s1 += hp[i + 1]; s2 += hp[i + 2]; n++;
-        }
-      }
-      const i = q * 4;
-      p[i] = Math.round(hp[i] * 0.5 + s0 / n * 0.5);
-      p[i + 1] = Math.round(hp[i + 1] * 0.5 + s1 / n * 0.5);
-      p[i + 2] = Math.round(hp[i + 2] * 0.5 + s2 / n * 0.5);
-    }
-  }
-  c.rawCtx.putImageData(raw, 0, 0);
-  c.ctx.drawImage(c.raw, 0, 0);
 }
 
 function globeScheduleReproject(layer) {
@@ -551,64 +244,77 @@ function globeScheduleReproject(layer) {
 
 function globeFinishTexture(layer) {
   const c = GLOBE._texCache[layer];
-  if (c.done) return;
+  if (!c || c.done) return;
   c.done = true;
-  if (layer === "truecolor" && c.raw) healMosaic(c);   // seam-free final heal
-  globeDrawLandFallback(layer);
+  globeDrawLandFallback(layer);   // offline: outline land where base tiles failed
   globeReproject(layer);
 }
 
-/* reproject the mercator mosaic into the equirect texture, one output
+/* reproject the mercator mosaics into the equirect texture, one output
    row at a time (each row has a constant latitude -> a straight
-   horizontal slice of the mercator map) */
+   horizontal slice of the mercator map). The Blue Marble base is
+   always drawn first, so the sphere is complete even before (or
+   without) any data layer; the data overlay is painted on top at 80%
+   so terrain still reads through the colour ramp. */
 function globeReproject(layer) {
   const c = GLOBE._texCache[layer];
   if (!c) return;
-  const eq = c.eqCtx, H = c.eq.height, W = c.eq.width;
+  const eq = c.eqCtx, W = c.eq.width, H = c.eq.height;
+  const withData = layer !== "truecolor" && !!TILE_SRC[layer];
+  eq.clearRect(0, 0, W, H);
   for (let y = 0; y < H; y++) {
     const lat = 90 - (y + 0.5) / H * 180;
-    const my = Math.min(c.merc.width - 1, Math.max(0,
+    const my = Math.min(c.base.height - 1, Math.max(0,
       Math.floor(latToY(Math.max(-85.05, Math.min(85.05, lat)), 3))));
-    eq.drawImage(c.merc, 0, my, W, 1, 0, y, W, 1);
+    eq.drawImage(c.base, 0, my, W, 1, 0, y, W, 1);
+    if (withData) {
+      eq.globalAlpha = 0.8;
+      eq.drawImage(c.data, 0, my, W, 1, 0, y, W, 1);
+      eq.globalAlpha = 1;
+    }
   }
   globeUploadTexture(layer);
 }
 
-/* natural-earth outlines wherever tiles failed (offline story).
-   Not used for truecolour: its holes are filled by the Blue Marble base. */
+/* offline story: where a Blue Marble base tile never arrived, paint the
+   Natural Earth outlines into the base canvas so the sphere still has
+   continents instead of pale ocean. Data tiles that fail simply stay
+   transparent (they are overlays). */
 function globeDrawLandFallback(layer) {
   const c = GLOBE._texCache[layer];
-  const failed = c.failed || [];
-  if (!failed.length || layer === "truecolor") return;
-  if (!GLOBE._land) return;          // world.json not loaded (yet)
-  const paint = (ctx) => {
-    ctx.fillStyle = "#dbe7cf";
-    ctx.strokeStyle = "#9db48f";
-    ctx.lineWidth = 1.5;
-    for (const f of GLOBE._land) {
-      const polys = f.geometry.type === "Polygon"
-        ? [f.geometry.coordinates] : f.geometry.coordinates;
-      for (const poly of polys) for (const ring of poly) {
-        ctx.beginPath();
-        let started = false;
-        for (const [lon, lat] of ring) {
-          const x = lonToX(lon, 3), y = latToY(lat, 3);
-          if (!started) { ctx.moveTo(x, y); started = true; }
-          else ctx.lineTo(x, y);
+  const missing = (c.failed || []).filter(([src]) => src === "bluemarble");
+  if (!missing.length) return;
+  const paint = () => {
+    if (!GLOBE._land) return;
+    const ctx = c.baseCtx;
+    for (const [, tx, ty] of missing) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(tx * 256, ty * 256, 256, 256);
+      ctx.clip();
+      ctx.fillStyle = "#dbe7cf";
+      ctx.strokeStyle = "#9db48f";
+      ctx.lineWidth = 1.5;
+      for (const f of GLOBE._land) {
+        const polys = f.geometry.type === "Polygon"
+          ? [f.geometry.coordinates] : f.geometry.coordinates;
+        for (const poly of polys) for (const ring of poly) {
+          ctx.beginPath();
+          let started = false;
+          for (const [lon, lat] of ring) {
+            const x = lonToX(lon, 3), y = latToY(lat, 3);
+            if (!started) { ctx.moveTo(x, y); started = true; }
+            else ctx.lineTo(x, y);
+          }
+          if (started) { ctx.closePath(); ctx.fill(); ctx.stroke(); }
         }
-        if (started) { ctx.closePath(); ctx.fill(); ctx.stroke(); }
       }
+      ctx.restore();
     }
+    globeReproject(layer);
   };
-  for (const [tx, ty] of failed) {
-    c.ctx.save();
-    c.ctx.beginPath();
-    c.ctx.rect(tx * 256, ty * 256, 256, 256);
-    c.ctx.clip();
-    paint(c.ctx);
-    c.ctx.restore();
-  }
-  globeReproject(layer);
+  if (GLOBE._land) paint();
+  else globeLand().then(() => { if (GLOBE._land) paint(); }).catch(() => {});
 }
 
 function globeUploadTexture(layer) {
@@ -957,6 +663,19 @@ function globeDrawOverlay(now, M, D) {
     const pr = globeProject(llToVec(GLOBE.pin.lat, GLOBE.pin.lon), M, D);
     if (pr && pr.facing) {
       const tipY = pr.y, R = 7.5, stem = 15;
+      /* soft pulse on the ground point (skipped for reduced motion) */
+      if (!prefersReducedMotion()) {
+        const t = (now % 2200) / 2200;
+        ctx.beginPath();
+        ctx.arc(pr.x, tipY, 3 + t * 17, 0, 7);
+        ctx.strokeStyle = `rgba(181,80,47,${0.5 * (1 - t)})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(pr.x, tipY, 2, 0, 7);
+        ctx.fillStyle = "rgba(181,80,47,0.9)";
+        ctx.fill();
+      }
       ctx.fillStyle = "#b5502f";
       ctx.strokeStyle = "#b5502f";
       ctx.lineWidth = 1.6;

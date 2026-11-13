@@ -633,3 +633,77 @@ NSA/
 3. Possible future work (not requested): market price data source to replace
    the farmer-entered market criterion; full AquaCrop daily soil-water
    balance; translations for the UI.
+
+---
+
+## 9. SESSION LOG — "globe is glitching, switch providers" (Prompt 3–4, 2026-11-13)
+
+**Prompt 4 (verbatim):**
+> "i need you to fix the map as it is glitching a lot to the point that it is not
+> usable so i need you to change providers it doesn't have to be real time
+> truecolor anymore it just needs to be functional and also add tweaks to the ui
+> and 3d visuals if you can and make it more appealing for the user"
+
+### 9.1 Root cause (finally identified)
+The globe was built from the **daily MODIS true-colour z3 mosaic**. That product
+is a *swath* composite: at global zoom it legitimately contains black wedges
+(polar night, orbital gaps, cloud gaps). Projected onto a sphere those wedges
+read as "holes and wobbles" — the globe looked broken even though every tile
+returned 200. The previous session tried to repair them (gap mask → heal tile →
+gain-matched Blue Marble fill → mosaic heal, `MAXRUN`/`dilateMask`), which was
+both heavy (per-pixel getImageData on 2048² canvases) and fragile. **The repair
+pipeline was the second bug**: it ran on every texture finish and could striping
+/ mis-gain the ocean.
+
+### 9.2 Fix — provider/layer switch (decision)
+* Globe base texture is now **NASA Blue Marble Next Generation** (`bluemarble`,
+  GIBS `BlueMarble_NextGeneration`, `GoogleMapsCompatible_Level8`, jpg,
+  **static** — no date path). It is complete, cloud-free and identical every
+  day, so a sphere can never show daily gaps.
+* Parameter layers (soil moisture / land temperature / greenery / rain) are
+  fetched as their normal **transparent PNG overlays** and composited at 80 %
+  over the Blue Marble base. "Satellite photo" on the globe is the Blue Marble
+  itself; the flat fallback map keeps using the live daily MODIS tiles (works
+  fine at regional zoom).
+* `frontend/globe.js` texture pipeline simplified to two canvases per layer
+  (`c.base`, `c.data`) → one equirectangular `c.eq`; `globeReproject()` paints
+  the base row then the data row. The entire healing pipeline
+  (`tileHasContent`, `gapMaskOf`, `blitMask`, `healTile`, `dilateMask`,
+  `healMosaic`, `MAXRUN`, `c.raw`, `c.mask`, `c.bases`, `c.waiting`) was
+  **deleted** (~370 lines), which also removed the per-frame jank.
+* Offline story: if base tiles fail, `globeDrawLandFallback()` paints Natural
+  Earth outlines into the base canvas (`world.json`); data tiles that fail just
+  stay transparent.
+* Image URLs: `/api/maptile/bluemarble/3/{x}/{y}.jpg` — 64 small jpgs, already
+  in the hub disk cache (pre-warmed 64/64, 0 s, from cache).
+* Layer note: `LAYERS.truecolor.globeNote` describes Blue Marble; `updateLayerUI`
+  picks it only when `PICKER === GLOBE`, so the flat map keeps the MODIS text.
+
+### 9.3 UI / 3D polish in this session
+* Pin-drop **pulse ring** on the ground point (expanding 2.2 s ring, skipped
+  under `prefers-reduced-motion`), plus a solid ground dot under the teardrop.
+* City labels retained (4 100 GeoNames cities, pop-scaled, collision-filtered),
+  dark/light stroke halo so names stay readable over imagery and data layers.
+* Dark mode already shipped: pre-paint theme script, header moon/sun toggle,
+  `localStorage lcrda-theme`, star field + atmosphere halo in the globe, all
+  canvases theme-aware. Verified again after the provider switch.
+* Design tokens: radius 14, layered `--shadow`/`--shadow-soft`, press scale,
+  focus rings, single `fadeUp` results reveal honouring reduced motion.
+
+### 9.4 Verification actually run
+* `node --check` on `globe.js`, `app.js`, `map.js` — OK.
+* `python -m tests.test_mcdm` → **35 passed, 0 failed**.
+* `/health` → 200; `/api/maptile/bluemarble/3/4/3.jpg` → 200 (5 736 B).
+* Headless Chromium 156 + SwiftShader at 500×900:
+  * light + Satellite photo: complete Blue Marble sphere, no wedges, labels,
+    pin pulse visible;
+  * dark + Soil moisture: stars/halo, transparent data overlay over base.
+* Debug harnesses (`frontend/_t*.html`, `_tg*.html`) **deleted** and committed.
+
+### 9.5 Known limits / next steps
+* Headless WebGL init is flaky; the flat map fallback remains the safety net.
+* Git **push still needs the user's GitHub credentials** (`could not read
+  Username`); commits are local and complete.
+* Suggested additions (not implemented): NVDI/soil-moisture legends on the
+  globe, tap-to-search city (geocode offline), day/night terminator toggle,
+  crop-calendar overlay, WebGL globe idle "tour" of the user's saved fields.
