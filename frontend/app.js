@@ -185,7 +185,7 @@ $("water").addEventListener("input", (e) => {
   }
 });
 
-/* ---------- map picker & GPS ---------- */
+/* ---------- map picker ---------- */
 /* renderer selection: WebGL 3D globe when available, flat map otherwise */
 let PICKER = null;
 function initPicker() {
@@ -238,44 +238,13 @@ function updateLayerUI(key) {
   const note = PICKER === GLOBE && cfg.globeNote ? cfg.globeNote : cfg.note;
   document.getElementById("layerNote").textContent = note;
 }
-$("btnMap").addEventListener("click", () => {
-  const p = $("mapPanel");
-  const opening = p.classList.contains("hidden");
-  p.classList.toggle("hidden", !opening);
-  if (opening) {
-    buildChips();
-    PICKER.open();
-    updateLayerUI(PICKER.layer || MAP.layer);
-    p.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  } else PICKER.stop();
-});
 $("btnUseSpot").addEventListener("click", () => {
-  if (!PICKER.pin) { $("mapCoord").textContent = "Tap the map first to drop the pin."; return; }
+  if (!PICKER.pin) { $("mapCoord").textContent = "Tap the globe first to drop the pin."; return; }
   $("lat").value = PICKER.pin.lat.toFixed(4);
   $("lon").value = PICKER.pin.lon.toFixed(4);
-  $("mapPanel").classList.add("hidden");
-  PICKER.stop();
-  $("mapCoord").textContent = "No spot chosen yet";
-});
-$("btnGPS").addEventListener("click", () => {
-  if (!navigator.geolocation) {
-    $("dataStatus").textContent = "This phone cannot share its location — type the numbers or pick on the map instead.";
-    return;
-  }
-  $("dataStatus").className = "statusline";
-  $("dataStatus").textContent = "Asking the phone for your location…";
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      $("lat").value = pos.coords.latitude.toFixed(4);
-      $("lon").value = pos.coords.longitude.toFixed(4);
-      $("dataStatus").className = "statusline ok";
-      $("dataStatus").textContent = "Field location set from your phone's GPS.";
-    },
-    () => {
-      $("dataStatus").className = "statusline warn";
-      $("dataStatus").textContent = "Could not get your location — pick it on the map instead.";
-    },
-    { enableHighAccuracy: true, timeout: 10000 });
+  $("mapCoord").textContent = "Spot applied — the pin stays on the globe.";
+  $("dataStatus").className = "statusline ok";
+  $("dataStatus").textContent = "Field location set. Check the satellite data when you are ready.";
 });
 
 /* ---------- satellite data status ---------- */
@@ -514,4 +483,9 @@ $("themeToggle").addEventListener("click", () => {
 /* ---------- boot ---------- */
 initSliders();
 initPicker();
+buildChips();
+if (PICKER) {
+  PICKER.open();
+  updateLayerUI(PICKER.layer || "truecolor");
+}
 

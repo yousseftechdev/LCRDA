@@ -38,16 +38,13 @@
   <section class="step" id="step1">
     <h2><span class="stepnum">1</span> Where is your field?</h2>
     <p class="hint">We look up satellite weather for this spot and the soil map
-    for it. One set of numbers covers about 50 km around it.</p>
+    for it. Tap the globe to place your field, or type the coordinates —
+    one set of numbers covers about 50 km around it.</p>
     <div class="fields">
       <label>Latitude <input id="lat" type="number" step="0.0001" inputmode="decimal" value="30.0444" autocomplete="off"></label>
       <label>Longitude <input id="lon" type="number" step="0.0001" inputmode="decimal" value="31.2357" autocomplete="off"></label>
     </div>
-    <div class="datarow">
-      <button id="btnMap" class="ghost" type="button">Pick on a map</button>
-      <button id="btnGPS" class="ghost" type="button">Use my location</button>
-    </div>
-    <div id="mapPanel" class="mappanel hidden">
+    <div id="mapPanel" class="mappanel">
       <div id="layerChips" class="chips" role="group" aria-label="Map layer"></div>
       <p id="layerNote" class="hint"></p>
       <div class="mapbar">

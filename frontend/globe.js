@@ -1,29 +1,36 @@
-/* globe.js -- 3D globe location picker (zero dependencies, raw WebGL).
-   A textured unit sphere: today's NASA GIBS imagery is reprojected
-   client-side from Web-Mercator tiles (z3 mosaic, 8x8) into an
-   equirectangular texture, so the imagery sits on the sphere without
-   the flat map's projection wobbles. Drag to spin, pinch/wheel to zoom,
-   tap to drop the pin (exact ray-sphere intersection). City names from
-   GeoNames are drawn on a 2D overlay with the same perspective math.
-   Dark mode gets a star field behind the globe. The flat map (map.js)
-   stays as the automatic fallback when WebGL is unavailable. */
+/* globe.js -- interactive 3D globe location picker.
+   Built on three.js r149 (vendored at vendor/three.min.js, MIT -- no CDN,
+   still fully offline): a textured unit sphere with an atmosphere shell,
+   a small 3D satellite on a tilted orbit, and a star backdrop that drifts
+   with the pointer. NASA GIBS imagery is reprojected client-side from
+   Web-Mercator tiles (z3 mosaic, 8x8) into an equirectangular texture, so
+   the imagery sits on the sphere without the flat map's projection
+   wobbles. Drag to spin, pinch/wheel to zoom (deep enough for 15k-person
+   towns), tap to drop the pin (exact ray-sphere intersection). City names
+   from GeoNames are drawn on a 2D overlay with the same perspective math.
+   The flat map (map.js) stays as the automatic fallback when WebGL is
+   unavailable. */
 
 const GLOBE = {
   supported: false,
   layer: "truecolor",
   pin: null,
   // view state (dist = camera distance; 3.4 frames the whole globe with
-  // a margin, 2.4 is a comfortable zoom-in, 6 a comfortable zoom-out)
+  // a margin, 1.35 is the deepest zoom, 6 the widest)
   yaw: 0, pitch: 0, dist: 3.4,
   _raf: 0, _running: false,
   _lastInteract: 0,
   _cities: null, _citiesPromise: null,
-  _texCache: {},            // layer -> {merc, eq, glTex, pending, done}
+  _texCache: {},            // layer -> {base, data, eq, tex, pending, done}
   _land: null, _landPromise: null,
+  _px: 0, _py: 0, _hover: false,   // pointer position for parallax/glow
 };
 
 const RAD = Math.PI / 180;
 const FOV = 38 * RAD;
+/* camera distance clamps: 1.35 = deep enough to read towns of 15k people,
+   6 = the whole planet with space around it */
+const ZOOM_MIN = 1.35, ZOOM_MAX = 6;
 
 /* ---------- tiny mat3 helpers (row-major) ---------- */
 function rotY(a) { const c = Math.cos(a), s = Math.sin(a); return [c, 0, s, 0, 1, 0, -s, 0, c]; }
@@ -90,8 +97,45 @@ GLOBE.init = function () {
     }));
   scene.add(atmo);
 
+  /* A small 3D satellite on a tilted orbit: real geometry (body, solar
+     panels, dish) instead of a 2D dot, and the orbit ring is depth-tested
+     by the globe so it disappears behind the planet. Both are hidden at
+     deep zoom, where the camera is inside the orbit. */
+  const sat = new THREE.Group();
+  const shipMat = new THREE.MeshBasicMaterial({ color: 0xc3d0dc });
+  const panelMat = new THREE.MeshBasicMaterial({ color: 0x1f5f9e });
+  const goldMat = new THREE.MeshBasicMaterial({ color: 0xd9c68f });
+  const satBody = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.045, 0.09), shipMat);
+  sat.add(satBody);
+  for (const side of [-1, 1]) {
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.006, 0.055), panelMat);
+    panel.position.set(side * 0.11, 0, 0);
+    sat.add(panel);
+  }
+  const dish = new THREE.Mesh(new THREE.ConeGeometry(0.028, 0.04, 12), goldMat);
+  dish.rotation.x = Math.PI / 2;
+  dish.position.z = 0.07;
+  sat.add(dish);
+  scene.add(sat);
+
+  const ORBIT_R = 1.42, ORBIT_INC = 0.45;
+  const orbitPts = [];
+  for (let i = 0; i < 128; i++) {
+    const a = i / 128 * Math.PI * 2;
+    orbitPts.push(new THREE.Vector3(
+      ORBIT_R * Math.cos(a),
+      ORBIT_R * Math.sin(a) * Math.sin(ORBIT_INC),
+      ORBIT_R * Math.sin(a) * Math.cos(ORBIT_INC)));
+  }
+  const orbit = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(orbitPts),
+    new THREE.LineBasicMaterial({ color: 0x7fb2e8, transparent: true,
+                                  opacity: 0.3, depthWrite: false }));
+  scene.add(orbit);
+
   GLOBE._renderer = renderer; GLOBE._scene = scene; GLOBE._camera = camera;
   GLOBE._sphere = sphere; GLOBE._mat = material;
+  GLOBE._sat = sat; GLOBE._orbit = orbit;
 
   GLOBE._space = document.getElementById("spaceCanvas");
   GLOBE._overlay = document.getElementById("globeOverlay");
@@ -105,9 +149,8 @@ GLOBE.init = function () {
       .addEventListener("change", () => {
         if (!localStorage.getItem("lcrda-theme")) drawSpace();
       });
-  /* the panel is display:none at boot, so its measured width can be a
-     stale 320px -- re-measure whenever the wrapper actually changes size
-     (a stretched canvas was itself a source of blur/wobble) */
+  /* re-measure whenever the wrapper changes size: a CSS-stretched canvas
+     was itself a source of blur/wobble */
   if (window.ResizeObserver) {
     GLOBE._ro = new ResizeObserver(() => globeSize());
     GLOBE._ro.observe(canvas.parentElement);
@@ -351,7 +394,7 @@ function globeBindEvents(canvas) {
     if (pts.size === 2 && pinchD0) {
       const [a, b] = [...pts.values()];
       const d = Math.hypot(a[0] - b[0], a[1] - b[1]);
-      GLOBE.dist = Math.max(2.4, Math.min(6, dist0 * pinchD0 / d));
+      GLOBE.dist = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, dist0 * pinchD0 / d));
       drawSpace(); return;
     }
     if (!last) return;
@@ -378,9 +421,26 @@ function globeBindEvents(canvas) {
   };
   canvas.addEventListener("pointerup", up);
   canvas.addEventListener("pointercancel", up);
+
+  /* pointer-reactive backdrop: stars drift against the cursor and a soft
+     glow follows it under the globe (desktop hover; ignored for touch) */
+  canvas.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch") return;
+    const r = canvas.getBoundingClientRect();
+    if (!r.width) return;
+    GLOBE._px = Math.max(-1, Math.min(1, (e.clientX - r.left) / r.width * 2 - 1));
+    GLOBE._py = Math.max(-1, Math.min(1, (e.clientY - r.top) / r.height * 2 - 1));
+    GLOBE._hover = true;
+    scheduleSpace();
+  });
+  canvas.addEventListener("pointerleave", () => {
+    GLOBE._hover = false; GLOBE._px = GLOBE._py = 0;
+    scheduleSpace();
+  });
+
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
-    GLOBE.dist = Math.max(2.4, Math.min(6,
+    GLOBE.dist = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
       GLOBE.dist * Math.exp(e.deltaY * 0.0011)));
     touch(); drawSpace();
   }, { passive: false });
@@ -388,9 +448,9 @@ function globeBindEvents(canvas) {
   const zi = document.getElementById("zoomIn"),
         zo = document.getElementById("zoomOut");
   if (zi) zi.addEventListener("click", () =>
-    { GLOBE.dist = Math.max(2.4, GLOBE.dist * 0.78); drawSpace(); });
+    { GLOBE.dist = Math.max(ZOOM_MIN, GLOBE.dist * 0.78); drawSpace(); });
   if (zo) zo.addEventListener("click", () =>
-    { GLOBE.dist = Math.min(6, GLOBE.dist / 0.78); drawSpace(); });
+    { GLOBE.dist = Math.min(ZOOM_MAX, GLOBE.dist / 0.78); drawSpace(); });
 }
 
 function prefersReducedMotion() {
@@ -438,6 +498,7 @@ GLOBE.open = function () {
   if (!isNaN(lat) && !isNaN(lon)) {
     GLOBE.pin = { lat, lon };
     GLOBE.yaw = -lon * RAD; GLOBE.pitch = lat * RAD; GLOBE.dist = 3.4;
+    globeSetPin(lat, lon);
   } else {
     GLOBE.pin = null;
     if (!GLOBE._openedOnce) { GLOBE.yaw = 20 * RAD; GLOBE.pitch = 22 * RAD; GLOBE.dist = 3.6; }
@@ -472,7 +533,7 @@ function globeSetPin(lat, lon) {
   if (el) el.textContent = `${GLOBE.pin.lat.toFixed(3)}, ${GLOBE.pin.lon.toFixed(3)}`;
 }
 
-/* ---------- cities ---------- */
+/* ---------- cities (GeoNames cities15000: [lat, lon, name, pop]) ---------- */
 function globeLoadCities() {
   if (GLOBE._cities) return;
   if (!GLOBE._citiesPromise)
@@ -480,10 +541,12 @@ function globeLoadCities() {
       .then((list) => {
         const v = new Float32Array(list.length * 3);
         list.forEach((c, i) => {
-          const p = llToVec(c.la, c.lo);
+          const p = llToVec(c[0], c[1]);
           v[i * 3] = p[0]; v[i * 3 + 1] = p[1]; v[i * 3 + 2] = p[2];
         });
-        GLOBE._cities = list; GLOBE._cityVec = v;
+        GLOBE._cities = list.map((c) => ({ la: c[0], lo: c[1],
+                                           n: c[2], p: c[3] }));
+        GLOBE._cityVec = v;
       }).catch(() => {});
   return GLOBE._citiesPromise;
 }
@@ -513,6 +576,22 @@ function globeRun() {
 function globeDraw(now) {
   if (!GLOBE._renderer) return;
   GLOBE._sphere.rotation.set(GLOBE.pitch, GLOBE.yaw, 0);
+
+  /* animate the 3D satellite along its tilted orbit */
+  const showOrbit = GLOBE.dist > 2.5 && !prefersReducedMotion();
+  if (GLOBE._sat) {
+    GLOBE._sat.visible = showOrbit;
+    if (showOrbit) {
+      const a = now * 0.00045;
+      const r = 1.42, inc = 0.45;
+      GLOBE._sat.position.set(
+        r * Math.cos(a), r * Math.sin(a) * Math.sin(inc),
+        r * Math.sin(a) * Math.cos(inc));
+      GLOBE._sat.rotation.set(0, -a + Math.PI / 2, inc * 0.6);
+    }
+  }
+  if (GLOBE._orbit) GLOBE._orbit.visible = showOrbit;
+
   GLOBE._camera.position.z = GLOBE.dist;
   GLOBE._renderer.render(GLOBE._scene, GLOBE._camera);
   globeDrawOverlay(now, modelMat(), GLOBE.dist);
@@ -530,15 +609,6 @@ function globeProject(p, M, D) {
            z: w[2], facing: w[2] > 1 / D };
 }
 
-/* same projection for objects already in world space (the satellite) */
-function globeProjectWorld(p, D) {
-  const zc = D - p[2];
-  if (zc <= 0) return null;
-  const f = 1 / Math.tan(FOV / 2);
-  const nx = p[0] * f / zc, ny = p[1] * f / zc;
-  return { x: (nx + 1) / 2 * GLOBE._W, y: (1 - ny) / 2 * GLOBE._H, z: p[2] };
-}
-
 function globeDrawOverlay(now, M, D) {
   const ctx = GLOBE._overlayCtx;
   if (!ctx) return;
@@ -547,53 +617,48 @@ function globeDrawOverlay(now, M, D) {
   ctx.clearRect(0, 0, GLOBE._W, GLOBE._H);
   const dark = isDarkTheme();
 
-  /* satellite in orbit (a small NASA touch) -- projected in WORLD space
-     so it circles the planet independently of the globe's spin, and the
-     occlusion test below uses the same world coordinates */
-  if (!prefersReducedMotion()) {
-    const a = now * 0.00045;
-    const r = 1.42, inc = 0.45;
-    const sat = [r * Math.cos(a), r * Math.sin(a) * Math.sin(inc),
-                 r * Math.sin(a) * Math.cos(inc)];
-    const pr = globeProjectWorld(sat, D);
-    if (pr && pr.z > -D) {
-      /* occlusion: does the camera ray to the satellite pass the globe? */
-      const O = [0, 0, D];
-      const seg = [sat[0] - O[0], sat[1] - O[1], sat[2] - O[2]];
-      const L = Math.hypot(...seg);
-      const u = seg.map((v) => v / L);
-      const tca = -(O[0] * u[0] + O[1] * u[1] + O[2] * u[2]);
-      const cp = [O[0] + tca * u[0], O[1] + tca * u[1], O[2] + tca * u[2]];
-      const occluded = tca > 0 && tca < L && Math.hypot(...cp) < 0.995;
-      if (!occluded) {
-        ctx.fillStyle = dark ? "#9fd0ff" : "#5b87b5";
-        ctx.beginPath();
-        ctx.arc(pr.x, pr.y, 3.2, 0, 7);
-        ctx.fill();
-      }
-    }
-  }
-
-  /* city labels */
+  /* city labels -- the deeper you zoom, the smaller the towns we show.
+     GeoNames cities15000 is sorted by population desc, so `break` is safe. */
   if (GLOBE._cities && GLOBE._cityVec) {
-    const minPop = D > 3.4 ? 3e6 : D > 2.8 ? 1e6 : D > 2.2 ? 400e3 : 150e3;
+    const minPop = D > 3.6 ? 6e6
+                 : D > 3.0 ? 2.5e6
+                 : D > 2.5 ? 1e6
+                 : D > 2.1 ? 400e3
+                 : D > 1.8 ? 150e3
+                 : D > 1.55 ? 60e3
+                 : 15e3;                       // deepest: every city in the set
+    const cap = Math.round((D < 1.9 ? 60 : 44) * (GLOBE._W < 460 ? 0.72 : 1));
     const labels = [];
     const v = GLOBE._cityVec;
+    const f = 1 / Math.tan(FOV / 2);
+    const invD = 1 / D;
     for (let i = 0; i < GLOBE._cities.length; i++) {
       const c = GLOBE._cities[i];
       if (c.p < minPop) break;                  // sorted by population desc
-      const pr = globeProject([v[i * 3], v[i * 3 + 1], v[i * 3 + 2]], M, D);
-      if (pr && pr.facing) labels.push({ c, pr });
+      const x = v[i * 3], y = v[i * 3 + 1], z = v[i * 3 + 2];
+      /* cheap back-face test before allocating a projection */
+      const wx = M[0] * x + M[1] * y + M[2] * z;
+      const wy = M[3] * x + M[4] * y + M[5] * z;
+      const wz = M[6] * x + M[7] * y + M[8] * z;
+      if (wz <= invD) continue;
+      const zc = D - wz;
+      labels.push({ c, pr: {
+        x: ((wx * f / zc) + 1) / 2 * GLOBE._W,
+        y: (1 - (wy * f / zc)) / 2 * GLOBE._H,
+      } });
     }
     labels.sort((a, b) => b.c.p - a.c.p);
     ctx.textBaseline = "middle";
     const placed = [];
     let shown = 0;
     for (const { c, pr } of labels) {
-      if (shown >= 42) break;
-      const fs = Math.max(9.5, Math.min(14, 8 + 2.1 * Math.log10(c.p / 15e4)));
-      const wEst = c.n.length * fs * 0.56 + 6;
+      if (shown >= cap) break;
+      const fs = Math.max(8.5, Math.min(12.5, 7.4 + 1.8 * Math.log10(c.p / 1e4)));
+      const wEst = c.n.length * fs * 0.6 + 8;
       const box = [pr.x - 2, pr.y - fs / 2 - 1, pr.x + wEst, pr.y + fs / 2 + 1];
+      /* do not let names run off the canvas or collide with another name */
+      if (box[0] < 2 || box[2] > GLOBE._W - 2 ||
+          box[1] < 2 || box[3] > GLOBE._H - 2) continue;
       if (placed.some((b) => !(box[2] < b[0] || box[0] > b[2] ||
                                box[3] < b[1] || box[1] > b[3]))) continue;
       placed.push(box); shown++;
@@ -647,6 +712,12 @@ function globeDrawOverlay(now, M, D) {
 function isDarkTheme() {
   return document.documentElement.dataset.theme === "dark";
 }
+let _spaceQueued = false;
+function scheduleSpace() {
+  if (_spaceQueued) return;
+  _spaceQueued = true;
+  requestAnimationFrame(() => { _spaceQueued = false; drawSpace(); });
+}
 function drawSpace() {
   const cv = GLOBE._space;
   if (!cv) return;
@@ -658,19 +729,32 @@ function drawSpace() {
   const cx = W / 2, cy = H / 2;
   const f = (H / 2) / Math.tan(FOV / 2);
   const R = f / Math.sqrt(GLOBE.dist * GLOBE.dist - 1);
+
+  /* cursor glow: a soft light under the globe that tracks the pointer */
+  if (GLOBE._hover && !prefersReducedMotion()) {
+    const hx = (GLOBE._px * 0.5 + 0.5) * W;
+    const hy = (GLOBE._py * 0.5 + 0.5) * H;
+    const hg = ctx.createRadialGradient(hx, hy, 0, hx, hy, Math.max(W, H) * 0.5);
+    hg.addColorStop(0, dark ? "rgba(96,156,240,0.22)" : "rgba(120,170,225,0.18)");
+    hg.addColorStop(1, "rgba(96,156,240,0)");
+    ctx.fillStyle = hg; ctx.fillRect(0, 0, W, H);
+  }
+
   /* atmosphere halo */
   const g = ctx.createRadialGradient(cx, cy, R * 0.92, cx, cy, R * 1.5);
   g.addColorStop(0, dark ? "rgba(90,150,235,0.35)" : "rgba(130,175,225,0.30)");
   g.addColorStop(1, "rgba(90,150,235,0)");
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(cx, cy, R * 1.5, 0, 7); ctx.fill();
-  /* stars (dark mode only) */
+  /* stars (dark mode only) -- drift opposite the cursor for depth */
   if (dark) {
     let seed = 42;
     const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff;
                         return seed / 0x7fffffff; };
+    const ox = prefersReducedMotion() ? 0 : GLOBE._px * 10;
+    const oy = prefersReducedMotion() ? 0 : GLOBE._py * 7;
     for (let i = 0; i < 170; i++) {
-      const x = rnd() * W, y = rnd() * H, s = rnd();
+      const x = rnd() * W - ox, y = rnd() * H - oy, s = rnd();
       if (Math.hypot(x - cx, y - cy) < R * 1.05) continue;
       ctx.fillStyle = `rgba(235,242,250,${0.25 + s * 0.65})`;
       ctx.beginPath(); ctx.arc(x, y, 0.5 + s * 1.1, 0, 7); ctx.fill();

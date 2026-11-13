@@ -780,3 +780,87 @@ GPM IMERG (rainfall), NASA POWER (weather/climate), NASA GIBS/Worldview
 * `globeUploadTexture()` only marks `texture.needsUpdate`; the material map is
   swapped when the visible layer matches.
 * If a future browser lacks WebGL, the flat map path is untouched.
+
+---
+
+## 11. SESSION LOG — permanent globe picker, deeper zoom, 3D motion (2026-11-13, cont.)
+
+**Prompt 6 (verbatim):**
+> "Remove the Pick On Map button and keep the globe showing at all times, also
+> remove the Use my location button completely, increase the max zoom for the
+> globe, to show smallers cities not only capitals, @ios-design @ui-taste
+> @frontend-design @web-design-guidelines use these skills to make it more
+> interactive and visually appealing to the user like 3D models or moving
+> patterns that react to mouse movements etc.. research and find libraries to
+> do so if you can't do it yourself or can't do it well enough, also in the very
+> end suggest a way we can implement AI into our project, DO NOT IMPLEMENT IT
+> YOURSELF YET"
+
+### 11.1 UI: the globe is now the picker, always on screen
+* Deleted the `#btnMap` / `#btnGPS` `.datarow` from `index.html`.
+* Removed `hidden` from `#mapPanel`; deleted both button handlers and the
+  entire `navigator.geolocation` flow from `app.js` (no GPS permission prompt
+  is possible any more).
+* Boot now calls `initPicker()` → `buildChips()` → `PICKER.open()` →
+  `updateLayerUI()`, so the globe, layer chips and coordinate readout are live
+  on first paint.
+* `#btnUseSpot` no longer hides the panel or stops the renderer; it copies the
+  pin into the lat/lon inputs and leaves the globe running. `GLOBE.open()` now
+  calls `globeSetPin()` so `#mapCoord` shows the initial coordinates instead of
+  "No spot chosen yet".
+* Hint copy updated in `index.html` and in `initPicker()` (globe vs flat map).
+
+### 11.2 Deeper zoom, more cities
+* `ZOOM_MIN = 1.35`, `ZOOM_MAX = 6` constants; all four clamps (wheel, pinch,
+  `#zoomIn`, `#zoomOut`) use them. Previously the floor was `2.4`.
+* `frontend/cities.json` replaced with GeoNames `cities15000` (34,212 places,
+  pop ≥ 15k) in compact array form `[lat, lon, name, pop]`, sorted by
+  population desc, 1.12 MB. `globeLoadCities()` normalises it to
+  `{la, lo, n, p}` and a parallel `Float32Array` of unit vectors.
+* Labels are zoom-aware: population floors step 6M → 2.5M → 1M → 400k → 150k →
+  60k → 15k as `GLOBE.dist` falls; cap 60 labels at deep zoom (44 otherwise,
+  ×0.72 under 460 px). Font 8.5–12.5 px. Labels that would run off-canvas or
+  collide are skipped. The per-frame loop uses an inline back-face test and
+  allocates only for visible cities (34k candidates at deepest zoom must stay
+  smooth on a Pi 4).
+
+### 11.3 Interaction / visual upgrades (no new libraries beyond three.js)
+* **3D satellite model** built from three.js primitives (body, two solar
+  panels, gold dish) orbiting on a tilted 1.42-radius path, with a depth-tested
+  `LineLoop` orbit ring. Both hide when `dist <= 2.5` (camera would be inside
+  the orbit) and under `prefers-reduced-motion`.
+* **Pointer-reactive backdrop**: `pointermove` on the globe stores normalised
+  `_px/_py`; `drawSpace()` drifts the star field opposite the cursor and draws
+  a soft radial glow that follows it under the globe. Redraws are rAF-coalesced
+  via `scheduleSpace()`. Ignored for touch pointers and reduced motion.
+* Removed the old 2D satellite dot/occlusion math from `globeDrawOverlay` and
+  the now-unused `globeProjectWorld()`.
+* Kept: drag-to-spin + inertia, idle auto-rotation, Fresnel atmosphere shell,
+  pin pulse, exact ray-sphere tap picking.
+
+### 11.4 Verification actually run
+* `node --check globe.js` / `app.js` OK; **35/35** backend tests pass;
+  `/health` 200.
+* Headless Chromium + SwiftShader:
+  * 900 px light: globe on first paint, Cairo pin + coords, layer chips,
+    smaller-city labels, "Use this spot" keeps the panel;
+  * 900 px dark + Soil moisture: SMAP overlay composites over Blue Marble,
+    stars, 3D satellite + orbit visible;
+  * 420 px mobile: globe and chips fit, edge labels clipped cleanly;
+  * `dist = 1.4` over Punjab: Lahore, Peshawar, Rawalpindi, Kabul, Ahmedabad,
+    Surat all labelled (15k-city threshold works);
+  * `--disable-3d-apis`: init throws, flat-map fallback still shows with the
+    correct "Tap the map…" hint and visible `mapCanvas`.
+* Functional probe: layer switch, pointermove, `Use this spot`, city load
+  (34,212), 0 window errors.
+* Debug harnesses (`_*.html`) deleted before commit.
+
+### 11.5 Notes for next agent
+* City format is now positional: `c[0]=lat, c[1]=lon, c[2]=name, c[3]=pop`
+  (normalised to `.la/.lo/.n/.p` in `GLOBE._cities`). Do not reintroduce the
+  old `{la,lo,n,p}` JSON without updating `globeLoadCities()`.
+* Zoom clamps live in `ZOOM_MIN` / `ZOOM_MAX`; change them once, not per event.
+* Layer/theme changes call `drawSpace()`; pointer movement uses
+  `scheduleSpace()` to avoid a redraw per mouse event.
+* AI integration was **requested as a suggestion only** and deliberately not
+  implemented (see the handoff message that accompanies this commit).
